@@ -6,14 +6,18 @@ flask>=3.0.0
 requests>=2.31.0
 
 # OCR
-# rapidocr_onnxruntime is the PRIMARY engine (config.OCR_ENGINE = "paddleocr"),
-# not an optional extra. It does text *detection* then recognition, which is
-# what real bus photos need: the route board is often ~2% of the frame. Without
-# it the pipeline falls back to Tesseract --psm 7, which assumes the whole image
-# is one line of text and scores 1/8 on the benchmark set versus 7/8 with this.
-rapidocr_onnxruntime>=1.4.0
-pytesseract>=0.3.10            # fallback engine only
+pytesseract>=0.3.10
 # tesseract-ocr binary itself is installed via apt/package manager — see guide
+#
+# THE REAL OCR ENGINE LIVES IN requirements-ocr.txt — install that too unless
+# you are deploying to Vercel:
+#
+#     pip install -r requirements.txt -r requirements-ocr.txt
+#
+# This file is deliberately kept serverless-safe. rapidocr_onnxruntime depends
+# on opencv-python (not -headless), which needs libGL.so.1; that library does
+# not exist on Vercel's runtime, so pulling it in here makes `import cv2` fail
+# at startup with an ImportError before the app can serve anything.
 
 # GPIO (Only needed on physical Raspberry Pi hardware)
 # gpiozero>=2.0.1

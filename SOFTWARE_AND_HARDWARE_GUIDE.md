@@ -66,8 +66,14 @@ sudo apt install -y \
 
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-ocr.txt
 ```
+
+`requirements-ocr.txt` is split out because `rapidocr_onnxruntime` depends on
+`opencv-python` rather than `opencv-python-headless`, and that build needs
+`libGL.so.1` — absent from Pi OS Lite (`sudo apt install -y libgl1`) and from
+serverless runtimes. It is still the primary engine; without it the pipeline
+falls back to Tesseract and route recognition drops from 7/8 to 1/8.
 
 `--system-site-packages` matters: `python3-picamera2` is an apt package
 tied to the system's libcamera build, not something `pip` can install
