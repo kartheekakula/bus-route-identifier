@@ -49,19 +49,74 @@ class OcrResult:
 
 
 _paddle_engine = None
+_paddle_init_failed = False
 
 
 def _get_paddle_engine():
-    global _paddle_engine
+    global _paddle_engine, _paddle_init_failed
+    if _paddle_init_failed:
+        return None
     if _paddle_engine is None:
         try:
             from rapidocr_onnxruntime import RapidOCR
             _paddle_engine = RapidOCR()
             logger.info("PaddleOCR (PP-OCRv4 ONNX Runtime) initialized successfully.")
         except Exception as e:
+            # Latch the failure. Retrying the import on every button press costs
+            # time on the hot path and floods the log with the same warning.
+            _paddle_init_failed = True
             logger.warning("PaddleOCR initialization failed: %s", e)
             return None
     return _paddle_engine
+
+
+def _detection_height(box) -> float:
+    try:
+        ys = [float(p[1]) for p in box]
+        return max(ys) - min(ys)
+    except Exception:
+        return 0.0
+
+
+def _score_candidate(route: str, text: str, conf: float, rel_height: float) -> float:
+    """Rank how likely a route token found in `text` is the actual route board.
+
+    A route board is typically the largest text in frame, read confidently, and
+    standing alone or leading its line ("55K", "231 AUTO NAGAR"). A route-shaped
+    token buried mid-string is usually part of an ad, a plate, or a slogan.
+    """
+    compact = re.sub(r"[^A-Z0-9/]", "", text.upper())
+    score = conf + 0.25 * rel_height
+    if compact == route:
+        score += 0.35
+    elif compact.startswith(route):
+        score += 0.15
+    if re.search(config.PLATE_REGEX, text.upper()):
+        score -= 0.40
+    return score
+
+
+def _select_best_route(detections, frame_height: int):
+    """Pick the most plausible route from per-detection OCR output.
+
+    `detections` is a list of (text, confidence 0-1, box). Returns
+    (route, confidence 0-100) where the confidence belongs to the winning
+    detection — averaging every detection in the frame would let a dozen
+    shopfront signs drown out a cleanly-read route board.
+    """
+    best = None
+    best_score = float("-inf")
+    heights = [_detection_height(b) for _, _, b in detections]
+    tallest = max(heights) if heights else 0.0
+
+    for (text, conf, _box), height in zip(detections, heights):
+        rel_height = (height / tallest) if tallest else 0.0
+        for route in _route_tokens(text):
+            score = _score_candidate(route, text, conf, rel_height)
+            if score > best_score:
+                best_score, best = score, (route, conf * 100.0)
+
+    return best if best else (None, 0.0)
 
 
 def _extract_with_paddleocr(frame: np.ndarray) -> OcrResult:
@@ -73,42 +128,19 @@ def _extract_with_paddleocr(frame: np.ndarray) -> OcrResult:
     try:
         h, w = frame.shape[:2]
         max_dim = max(h, w)
-        # Normalize excessively high-res camera captures (<= 1600 max dimension) for speed
-        if max_dim > 1600:
-            scale = 1600.0 / max_dim
-            proc_frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-        else:
-            proc_frame = frame
+        if max_dim > config.OCR_MAX_DIM:
+            scale = config.OCR_MAX_DIM / max_dim
+            frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
-        res, _ = engine(proc_frame)
-
-        # In outdoor bus photos, scan the middle windshield band for route board placards
-        placard_res = []
-        if h > 1000 and w > 1000:
-            placard = frame[int(0.25 * h):int(0.55 * h), int(0.15 * w):int(0.85 * w)]
-            p_res, _ = engine(placard)
-            if p_res:
-                placard_res = p_res
-
-        all_detections = (res or []) + placard_res
-        if not all_detections:
+        res, _ = engine(frame)
+        if not res:
             return OcrResult("", None, 0.0, "paddleocr", time.monotonic() - t0)
 
-        lines = []
-        confidences = []
-        for line in all_detections:
-            text = line[1].strip()
-            score = float(line[2]) * 100.0
-            if text and text not in lines:
-                lines.append(text)
-                confidences.append(score)
+        detections = [(line[1].strip(), float(line[2]), line[0]) for line in res if line[1].strip()]
+        route, confidence = _select_best_route(detections, frame.shape[0])
+        raw_text = " ".join(text for text, _, _ in detections)
 
-        raw_text = " ".join(lines)
-        mean_conf = sum(confidences) / len(confidences) if confidences else 0.0
-        route = _parse_route(raw_text)
-        elapsed = time.monotonic() - t0
-
-        return OcrResult(raw_text, route, mean_conf, "paddleocr", elapsed, confidence_is_estimated=False)
+        return OcrResult(raw_text, route, confidence, "paddleocr", time.monotonic() - t0)
     except Exception as e:
         logger.error("PaddleOCR extraction error: %s", e, exc_info=True)
         return OcrResult("", None, 0.0, "paddleocr_error", time.monotonic() - t0)
@@ -265,27 +297,39 @@ def _extract_with_easyocr(binary_image: np.ndarray) -> OcrResult:
     return OcrResult(raw_text, route, mean_conf, "easyocr", elapsed)
 
 
+_NON_ROUTE_WORDS = ("STOP", "KEEP", "DISTANCE", "FEET", "SPEED", "TATA",
+                    "LEYLAND", "APSRTC", "BMTC", "DTC")
+
+
+def _route_tokens(text: str) -> list:
+    """Every route-shaped token in `text`, most specific first.
+
+    Strips registration plates and painted bus markings first, so "AP31TE 5522"
+    and "KEEP 50 FEET DISTANCE" cannot masquerade as a route.
+    """
+    if not text:
+        return []
+
+    cleaned = re.sub(config.PLATE_REGEX, " ", text.upper())
+    cleaned = re.sub(r"\b(" + "|".join(_NON_ROUTE_WORDS) + r")\b", " ", cleaned)
+
+    seen, tokens = set(), []
+    for match in _ROUTE_PATTERN.findall(cleaned):
+        if match in ("0", "00", "O") or match in seen:
+            continue
+        seen.add(match)
+        tokens.append(match)
+    # Longer tokens carry more information ("55K" over "55"), so try them first.
+    tokens.sort(key=len, reverse=True)
+    return tokens
+
+
 def _parse_route(raw_text: str) -> Optional[str]:
-    """Pull the most plausible route token out of noisy OCR text."""
-    if not raw_text:
-        return None
+    """Pull the most plausible route token out of a flat OCR string.
 
-    # 1. Clean out common vehicle plate prefixes (e.g. AP16, DL1P, KA51, TS09) and bus markings (STOP, TATA, SPEED)
-    cleaned = re.sub(r'\b[A-Z]{2}\s*\d{1,2}\s*[A-Z]{0,2}\s*\d{0,4}\b', '', raw_text, flags=re.I)
-    cleaned = re.sub(r'\b(STOP|KEEP|DISTANCE|FEET|SPEED|TATA|LEYLAND|APSRTC|BMTC|DTC)\b', '', cleaned, flags=re.I)
-
-    # 2. Standard regex: 1-3 digits + optional single letter (e.g. 12, 500A, 21C, 764)
-    matches = _ROUTE_PATTERN.findall(cleaned.upper())
-    # Filter out lone 0 / O / STOP
-    matches = [m for m in matches if m not in ("0", "00", "O")]
-    if matches:
-        return max(matches, key=len)
-
-    # 3. Fallback search across original raw_text if cleaned was too aggressive
-    raw_matches = _ROUTE_PATTERN.findall(raw_text.upper())
-    raw_matches = [m for m in raw_matches if m not in ("0", "00", "O") and not re.match(r'^[A-Z]{2}\d+', m)]
-    if raw_matches:
-        return max(raw_matches, key=len)
-
-    return None
+    Used by the engines that return no per-detection geometry. When geometry is
+    available, `_select_best_route` makes a far better-informed choice.
+    """
+    tokens = _route_tokens(raw_text)
+    return tokens[0] if tokens else None
 

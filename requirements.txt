@@ -6,8 +6,13 @@ flask>=3.0.0
 requests>=2.31.0
 
 # OCR
-pytesseract>=0.3.10
-# rapidocr_onnxruntime>=1.4.0   # Optional local engine for PaddleOCR PP-OCRv4
+# rapidocr_onnxruntime is the PRIMARY engine (config.OCR_ENGINE = "paddleocr"),
+# not an optional extra. It does text *detection* then recognition, which is
+# what real bus photos need: the route board is often ~2% of the frame. Without
+# it the pipeline falls back to Tesseract --psm 7, which assumes the whole image
+# is one line of text and scores 1/8 on the benchmark set versus 7/8 with this.
+rapidocr_onnxruntime>=1.4.0
+pytesseract>=0.3.10            # fallback engine only
 # tesseract-ocr binary itself is installed via apt/package manager — see guide
 
 # GPIO (Only needed on physical Raspberry Pi hardware)

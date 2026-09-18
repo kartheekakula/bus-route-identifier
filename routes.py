@@ -9,7 +9,6 @@ voice feedback with destination information without adding runtime file-system
 access latency.
 """
 import csv
-import difflib
 import logging
 import time
 from pathlib import Path
@@ -111,9 +110,20 @@ class RouteLookup:
         return getattr(self, "all_cities_routes", {}).get(r_upper)
 
     def correct_route(self, route: str) -> str:
-        """Fuzzy match a noisy OCR route string against known valid routes.
+        """Repair OCR character confusions in a route string.
 
-        Checks against active city routes first, then all known routes.
+        Only substitutions a character recogniser actually makes are tried
+        (O/0, I/1, S/5 ...), and a variant is accepted only on an *exact* hit
+        against a known route. Anything else is returned untouched, so an
+        unknown route is announced as-is rather than silently becoming a
+        different real bus.
+
+        This deliberately does not do similarity matching. A `difflib` pass at
+        cutoff 0.6 rewrote 47.7% of unrecognised-but-well-formed routes into a
+        different real route with a different destination -- "21C" became
+        "231" (Autonagar), which for a blind rider is a wrong-bus boarding, not
+        a typo. A missing destination is recoverable; a confident wrong one is
+        not.
         """
         if not route:
             return route
@@ -123,18 +133,37 @@ class RouteLookup:
         if route_upper in all_known:
             return route_upper
 
-        # Try to find a close match in primary city first
-        known_primary = list(self.routes.keys())
-        close_primary = difflib.get_close_matches(route_upper, known_primary, n=1, cutoff=0.6)
-        if close_primary:
-            return close_primary[0]
+        for variant in self._confusion_variants(route_upper):
+            if variant in self.routes:
+                logger.info("Corrected OCR route %r -> %r", route_upper, variant)
+                return variant
+        for variant in self._confusion_variants(route_upper):
+            if variant in all_known:
+                logger.info("Corrected OCR route %r -> %r", route_upper, variant)
+                return variant
 
-        # Try all known routes
-        close_all = difflib.get_close_matches(route_upper, list(all_known.keys()), n=1, cutoff=0.6)
-        if close_all:
-            return close_all[0]
+        return route_upper
 
-        return route
+    # Glyph pairs a recogniser genuinely confuses. Deliberately excludes
+    # look-alikes that are valid route suffixes in their own right (C, A, K),
+    # so "3C1" is never reinterpreted as "301".
+    _CONFUSIONS = {
+        "O": "0", "Q": "0", "D": "0",
+        "I": "1", "L": "1",
+        "S": "5", "B": "8", "Z": "2", "G": "6",
+    }
+
+    def _confusion_variants(self, route: str) -> list:
+        """Every string reachable by applying OCR glyph confusions to `route`."""
+        variants = {route}
+        for _ in range(len(route)):
+            for current in list(variants):
+                for i, ch in enumerate(current):
+                    replacement = self._CONFUSIONS.get(ch)
+                    if replacement:
+                        variants.add(current[:i] + replacement + current[i + 1:])
+        variants.discard(route)
+        return sorted(variants)
 
     def resolve_route_from_text(self, raw_text: str) -> Optional[str]:
         """Infers the route number if prominent destination names appear in the OCR text."""
