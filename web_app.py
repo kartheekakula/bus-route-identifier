@@ -12,6 +12,7 @@ import csv
 import io
 import logging
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -63,6 +64,27 @@ except Exception as e:
         "Tesseract-OCR and ensure it's on PATH.\n" + "=" * 70,
         type(e).__name__, e, config.TESSERACT_CMD,
     )
+
+# The check above only covers the *fallback* engine. Tesseract being healthy
+# says nothing about whether the engine we actually intend to use loaded, and a
+# silent downgrade here looks identical to "the OCR is just bad": every upload
+# comes back low-confidence and the device announces "unclear".
+if config.OCR_ENGINE == "paddleocr":
+    try:
+        import rapidocr_onnxruntime  # noqa: F401
+        logger.info("OCR ENGINE READY: rapidocr_onnxruntime (PP-OCRv4 detection + recognition)")
+    except ImportError:
+        logger.warning(
+            "\n" + "=" * 70 + "\n"
+            "OCR ENGINE DEGRADED: config.OCR_ENGINE is 'paddleocr' but\n"
+            "rapidocr_onnxruntime is not installed in this interpreter:\n"
+            "  %s\n"
+            "Falling back to Tesseract, which cannot locate text in a scene\n"
+            "photo -- it reads 1 of the 8 benchmark images instead of 7, so\n"
+            "almost every upload will come back 'unclear'. Install it with:\n"
+            "  pip install -r requirements-ocr.txt\n" + "=" * 70,
+            sys.executable,
+        )
 
 # Ensure timing log exists (gracefully handle read-only filesystems on serverless)
 try:
