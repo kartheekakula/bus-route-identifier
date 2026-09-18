@@ -1,0 +1,17 @@
+# Real OCR engine — install alongside requirements.txt on the Pi and on any
+# desktop you actually want to read bus photos with:
+#
+#     pip install -r requirements.txt -r requirements-ocr.txt
+#
+# This is the PRIMARY engine (config.OCR_ENGINE = "paddleocr"), not an optional
+# extra. It does text *detection* and then recognition, which is what real bus
+# photos need: the route board is often ~2% of the frame. Without it the
+# pipeline falls back to Tesseract --psm 7, which treats the whole image as a
+# single line of text and scores 1/8 on the benchmark set versus 7/8 with this.
+#
+# Kept out of requirements.txt because it depends on opencv-python rather than
+# opencv-python-headless. That build needs libGL.so.1, which is absent from
+# Vercel's serverless runtime and from Raspberry Pi OS Lite. On Pi OS Lite:
+#
+#     sudo apt install -y libgl1
+rapidocr_onnxruntime>=1.4.0

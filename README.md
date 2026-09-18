@@ -37,14 +37,20 @@ bus-route-identifier/
 
 ```bash
 sudo apt update
-sudo apt install -y python3-picamera2 tesseract-ocr espeak-ng --no-install-recommends
+sudo apt install -y python3-picamera2 tesseract-ocr espeak-ng libgl1 --no-install-recommends
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-ocr.txt
 
 python3 tools/pregenerate_cache.py   # warm the audio cache for common routes
 python3 main.py                      # run in foreground first, confirm it works
 ```
+
+`requirements-ocr.txt` holds the text-detection engine and is a separate file
+only because it pulls in `opencv-python`, which needs `libGL.so.1` and so
+cannot be installed on serverless hosts. Skip it and OCR falls back to
+Tesseract, which reads 1 of the 8 benchmark photos instead of 7 — check with
+`python3 tools/benchmark_ocr.py`.
 
 Once it runs cleanly, install it as a boot service — see
 `SOFTWARE_AND_HARDWARE_GUIDE.md`.

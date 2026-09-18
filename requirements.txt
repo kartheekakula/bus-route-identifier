@@ -7,8 +7,17 @@ requests>=2.31.0
 
 # OCR
 pytesseract>=0.3.10
-# rapidocr_onnxruntime>=1.4.0   # Optional local engine for PaddleOCR PP-OCRv4
 # tesseract-ocr binary itself is installed via apt/package manager — see guide
+#
+# THE REAL OCR ENGINE LIVES IN requirements-ocr.txt — install that too unless
+# you are deploying to Vercel:
+#
+#     pip install -r requirements.txt -r requirements-ocr.txt
+#
+# This file is deliberately kept serverless-safe. rapidocr_onnxruntime depends
+# on opencv-python (not -headless), which needs libGL.so.1; that library does
+# not exist on Vercel's runtime, so pulling it in here makes `import cv2` fail
+# at startup with an ImportError before the app can serve anything.
 
 # GPIO (Only needed on physical Raspberry Pi hardware)
 # gpiozero>=2.0.1
