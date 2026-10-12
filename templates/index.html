@@ -228,7 +228,44 @@
       color: var(--ink-muted);
     }
     #file-input {
-      display: none;
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .browse-pill-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 14px;
+      padding: 10px 22px;
+      background: var(--ink-black);
+      color: #FFFFFF;
+      font-family: 'Space Mono', monospace;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      transition: all 0.2s ease;
+    }
+    .browse-pill-btn:hover {
+      background: var(--vermilion-start);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(232, 93, 44, 0.4);
+    }
+    .browse-pill-btn:active {
+      transform: translateY(0);
     }
 
     /* Sample selector chips */
@@ -1070,10 +1107,31 @@
       <div class="spinner-text" id="loading-text">PROCESSING PIPELINE...</div>
     </div>
 
-    <div class="upload-slot" id="drop-zone">
+    <!-- Hidden native file input placed outside the label to prevent event-loop recursion -->
+    <input type="file" id="file-input" accept="image/*" />
+
+    <label class="upload-slot" id="drop-zone" for="file-input">
+      <span class="upload-icon">📷</span>
       <div class="upload-heading">SELECT OR DROP BUS PHOTO</div>
-      <div class="upload-hint">Drag & drop a route board photo here, or click to browse</div>
-      <input type="file" id="file-input" accept="image/*" />
+      <div class="upload-hint">Drag & drop a route board photo here, or click to open file explorer</div>
+      <div>
+        <button type="button" class="browse-pill-btn" id="browse-btn">
+          📁 Open File Explorer
+        </button>
+      </div>
+    </label>
+
+    <!-- QUICK TEST SAMPLE CHIPS -->
+    <div style="margin-top: 18px;">
+      <div class="sample-chips-label">OR QUICK TEST WITH A PRE-LOADED BUS PHOTO:</div>
+      <div class="sample-chips" id="sample-chips-container">
+        <button type="button" class="sample-chip" onclick="runSample('clear_route_12.jpg')">
+          🚌 Route 12 (Clear Board)
+        </button>
+        <button type="button" class="sample-chip" onclick="runSample('APSRTC_55K_Bus.jpg')">
+          🚌 Route 55K (APSRTC Bus)
+        </button>
+      </div>
     </div>
   </section>
 
@@ -1331,13 +1389,58 @@
   const runBenchmarkBtn = document.getElementById("run-benchmark-btn");
   const auditResultsBox = document.getElementById("audit-results-box");
 
-  // Upload handlers
-  dropZone.addEventListener("click", () => fileInput.click());
+  // Upload & File Explorer Handlers
+  const browseBtn = document.getElementById("browse-btn");
+  if (browseBtn) {
+    browseBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      fileInput.click();
+    });
+  }
+
+  fileInput.addEventListener("click", (e) => {
+    e.stopPropagation();
+  });
+
+  dropZone.addEventListener("click", (e) => {
+    if (e.target !== fileInput && e.target !== browseBtn && !browseBtn?.contains(e.target)) {
+      // Label natively activates file-input; stop any bubbling
+      e.stopPropagation();
+    }
+  });
+
   fileInput.addEventListener("change", (e) => {
     if (e.target.files && e.target.files[0]) {
       uploadFile(e.target.files[0]);
     }
   });
+
+  // Auto-populate available sample images
+  async function loadSamplesList() {
+    try {
+      const res = await fetch("/api/samples");
+      if (!res.ok) return;
+      const list = await res.json();
+      if (list && list.length > 0) {
+        const container = document.getElementById("sample-chips-container");
+        if (container) {
+          container.innerHTML = "";
+          list.forEach(item => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "sample-chip";
+            btn.innerHTML = `🚌 ${item.filename}`;
+            btn.onclick = () => runSample(item.filename);
+            container.appendChild(btn);
+          });
+        }
+      }
+    } catch (e) {
+      console.debug("Sample list fetch error:", e);
+    }
+  }
+  loadSamplesList();
 
   dropZone.addEventListener("dragover", (e) => {
     e.preventDefault();
