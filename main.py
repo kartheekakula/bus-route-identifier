@@ -38,7 +38,7 @@ from feedback import (
 )
 from power import BatteryMonitor
 from routes import RouteLookup
-from esp32_interface import ESP32Interface
+from arduino_interface import ArduinoInterface, ESP32Interface
 
 try:
     from gpiozero import Button
@@ -81,14 +81,15 @@ class BusRouteIdentifier:
         )
         self.route_lookup.startup_complete = True
 
-        # DrishtiCap ESP32 Serial Interface for 1-Button Gestures & ToF Direction
-        self.esp32 = ESP32Interface(
+        # DrishtiCap Arduino Serial Interface for 1-Button Gestures & ToF Direction
+        self.arduino = ArduinoInterface(
             port=config.SERIAL_PORT,
             baudrate=config.SERIAL_BAUDRATE,
             on_capture_ocr=self._on_button_pressed,
             on_replay_audio=self.replay_last_announcement,
             on_direction_detected=self.handle_direction_detected,
         )
+        self.esp32 = self.arduino  # backward-compatibility reference
 
     def _ensure_log_header(self):
         if not config.LOG_PATH.exists():
@@ -100,17 +101,17 @@ class BusRouteIdentifier:
     def start(self):
         self.camera.start()
         self.battery_monitor.start()
-        self.esp32.start()
+        self.arduino.start()
         if self.button:
             self.button.when_pressed = self._on_button_pressed
-            logger.info("Ready. Waiting for button presses (GPIO %s or ESP32 Serial).", config.BUTTON_PIN)
+            logger.info("Ready. Waiting for button presses (GPIO %s or Arduino Serial).", config.BUTTON_PIN)
         else:
-            logger.info("Ready. Waiting for ESP32 Serial 1-button triggers.")
+            logger.info("Ready. Waiting for Arduino Serial 1-button triggers.")
 
     def stop(self):
         self.camera.stop()
         self.battery_monitor.stop()
-        self.esp32.stop()
+        self.arduino.stop()
 
     def replay_last_announcement(self):
         """Triggered by 2 clicks (double click): replays the last spoken message."""

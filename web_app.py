@@ -11,6 +11,7 @@ import base64
 import csv
 import io
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -610,6 +611,7 @@ def handle_exception(e):
 
 
 if __name__ == "__main__":
-    print(f"[*] Starting Bus Route Identifier Web UI on http://127.0.0.1:5000")
+    port = int(os.environ.get("PORT", 5000))
+    print(f"[*] Starting Bus Route Identifier Web UI on http://localhost:{port}")
     print(f"[*] Loaded {len(route_lookup.routes)} routes for city '{config.CITY}'")
-    app.run(host="127.0.0.1", port=5000, debug=False, threaded=False)
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
