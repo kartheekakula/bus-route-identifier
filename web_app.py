@@ -166,6 +166,8 @@ def run_pipeline_instrumented(frame: np.ndarray, capture_s: float = 0.0,
         inferred = route_lookup.resolve_route_from_text(raw_text_clean)
         if inferred:
             raw_route = inferred
+            if ocr_result.confidence < config.OCR_MIN_CONFIDENCE:
+                ocr_result.confidence = max(ocr_result.confidence, 75.0)
 
     if raw_route:
         # A route number was parsed by the regex or resolved from destination text

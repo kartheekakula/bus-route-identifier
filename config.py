@@ -109,7 +109,7 @@ TESSERACT_LANG = "eng"
 # --psm 11 is a fallback for sparse/scattered text if psm 7 returns nothing.
 TESSERACT_PSM_PRIMARY = 7
 TESSERACT_PSM_FALLBACK = 11
-TESSERACT_WHITELIST = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/- "
+TESSERACT_WHITELIST = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/- "
 OCR_MIN_CONFIDENCE = 45  # 0-100, Tesseract mean word confidence; below this -> "unclear" feedback
 
 # Route-number pattern: 1-3 digits optionally followed by a single letter

@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
     PORT=10000 \
-    OCR_ENGINE=tesseract
+    OCR_ENGINE=paddleocr
 
 WORKDIR /app
 

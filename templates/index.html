@@ -8,8 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Share+Tech+Mono&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
-  <!-- In-browser WebAssembly OCR Engine for cloud serverless environments -->
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <!-- Fast Edge-AI Public Transit Audio Route Guidance -->
 
   <style>
     :root {
@@ -234,17 +233,13 @@
       color: var(--ink-muted);
     }
     #file-input {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border: 0;
+      position: fixed;
+      top: -100em;
+      left: -100em;
       opacity: 0;
-      pointer-events: none;
+      width: 0;
+      height: 0;
+      z-index: -1;
     }
     .browse-pill-btn {
       display: inline-flex;
@@ -1113,8 +1108,8 @@
       <div class="spinner-text" id="loading-text">PROCESSING PIPELINE...</div>
     </div>
 
-    <!-- Hidden native file input placed outside the slot with offscreen position for universal browser compatibility -->
-    <input type="file" id="file-input" accept="image/*" style="position:fixed; top:-1000px; left:-1000px; opacity:0; pointer-events:none;" />
+    <!-- Hidden native file input placed outside the slot with offscreen position -->
+    <input type="file" id="file-input" accept="image/*" style="position:fixed; top:-100em; left:-100em; opacity:0; width:0; height:0;" />
 
     <div class="upload-slot" id="drop-zone">
       <!-- Default Prompt State (when no image selected yet) -->
@@ -1123,9 +1118,9 @@
         <div class="upload-heading">SELECT OR DROP BUS PHOTO</div>
         <div class="upload-hint">Drag & drop a route board photo here, or click to open file explorer</div>
         <div style="margin-top: 14px;">
-          <label for="file-input" class="browse-pill-btn" id="browse-btn" style="cursor:pointer; display:inline-flex;">
+          <button type="button" class="browse-pill-btn" id="browse-btn">
             📁 Open File Explorer
-          </label>
+          </button>
         </div>
       </div>
 
@@ -1135,9 +1130,9 @@
           <span style="font-family:'Space Mono',monospace; font-size:12px; font-weight:700; color:var(--ink-black);" id="preview-filename-badge">
             BUS_PHOTO.JPG
           </span>
-          <label for="file-input" class="browse-pill-btn" id="btn-change-photo" style="margin-top:0; padding:6px 14px; font-size:11px; cursor:pointer; display:inline-flex;">
+          <button type="button" class="browse-pill-btn" id="btn-change-photo" style="margin-top:0; padding:6px 14px; font-size:11px; cursor:pointer;">
             🔄 Choose Different Photo
-          </label>
+          </button>
         </div>
 
         <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:16px; width:100%;">
@@ -1444,13 +1439,24 @@
   const browseBtn = document.getElementById("browse-btn");
   const changePhotoBtn = document.getElementById("btn-change-photo");
 
-  // DropZone click handler (for clicks anywhere outside the labels)
+  function openFilePicker(e) {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    unlockAudio();
+    fileInput.click();
+  }
+
+  if (browseBtn) browseBtn.addEventListener("click", openFilePicker);
+  if (changePhotoBtn) changePhotoBtn.addEventListener("click", openFilePicker);
+
   dropZone.addEventListener("click", (e) => {
-    // If clicking a label with for="file-input", the browser natively opens the picker
-    if (e.target.closest("label[for='file-input']")) {
+    // If the click was directly on one of the action buttons, let the button handler fire
+    if (e.target.closest("#browse-btn") || e.target.closest("#btn-change-photo")) {
       return;
     }
-    fileInput.click();
+    openFilePicker(e);
   });
 
   function showImagePreview(origSrc, filename) {
@@ -1461,7 +1467,10 @@
     const previewWrap = document.getElementById("upload-preview-wrap");
 
     if (origImg) origImg.src = origSrc;
-    if (grayImg) grayImg.src = "";
+    if (grayImg) {
+      grayImg.src = "";
+      grayImg.alt = "Computing OpenCV Grayscale & CLAHE...";
+    }
     if (nameBadge) nameBadge.textContent = (filename || "BUS_PHOTO.JPG").toUpperCase();
     if (promptWrap) promptWrap.style.display = "none";
     if (previewWrap) previewWrap.style.display = "block";
@@ -1477,6 +1486,7 @@
       };
       reader.readAsDataURL(file);
       uploadFile(file);
+      fileInput.value = "";
     }
   });
 
@@ -1523,60 +1533,23 @@
       };
       reader.readAsDataURL(file);
       uploadFile(file);
+      fileInput.value = "";
     }
   });
 
-  async function runClientOcrFallback(imageSource) {
-    if (typeof Tesseract === "undefined") return null;
-    showLoading("SERVER OCR UNAVAILABLE IN CLOUD: RUNNING IN-BROWSER NEURAL OCR...");
-    try {
-      const t0 = performance.now();
-      const { data: ocrData } = await Tesseract.recognize(imageSource, 'eng');
-      const elapsedMs = performance.now() - t0;
-      const text = (ocrData && ocrData.text) ? ocrData.text.trim() : "";
-      const conf = (ocrData && ocrData.confidence) ? ocrData.confidence : 85.0;
-      return { text, conf, elapsedMs };
-    } catch (e) {
-      console.warn("Client Tesseract error:", e);
-      return null;
-    }
-  }
-
   async function uploadFile(file) {
-    showLoading(`DECODING & RUNNING PIPELINE FOR ${file.name.toUpperCase()}...`);
+    showLoading(`PROCESSING ${file.name.toUpperCase()} WITH NEURAL OCR...`);
     const formData = new FormData();
     formData.append("file", file);
 
     try {
-      let res = await fetch("/api/identify", {
+      const res = await fetch("/api/identify", {
         method: "POST",
         body: formData,
       });
-      let data = await res.json();
-
-      // If server returned no route (e.g. cloud serverless with no native OCR engine),
-      // run client-side WebAssembly OCR and submit the recognized text for full pipeline processing
-      if (res.ok && (data.status === "no_route" || !data.route)) {
-        const clientOcr = await runClientOcrFallback(file);
-        if (clientOcr && clientOcr.text) {
-          showLoading("RESOLVING ROUTE & DESTINATION FROM CLIENT OCR...");
-          const retryForm = new FormData();
-          retryForm.append("file", file);
-          retryForm.append("client_ocr_text", clientOcr.text);
-          retryForm.append("client_ocr_conf", clientOcr.conf.toFixed(1));
-          retryForm.append("client_ocr_ms", clientOcr.elapsedMs.toFixed(1));
-
-          const retryRes = await fetch("/api/identify", {
-            method: "POST",
-            body: retryForm,
-          });
-          if (retryRes.ok) {
-            data = await retryRes.json();
-          }
-        }
-      }
-
+      const data = await res.json();
       hideLoading();
+
       if (!res.ok) {
         alert(data.error || "Pipeline run failed.");
         return;
@@ -1591,42 +1564,16 @@
   async function runSample(filename) {
     unlockAudio();
     showImagePreview(`/test_images/${filename}`, filename);
-    showLoading(`RUNNING PIPELINE ON ${filename.toUpperCase()}...`);
+    showLoading(`PROCESSING ${filename.toUpperCase()}...`);
     try {
-      let res = await fetch("/api/sample-identify", {
+      const res = await fetch("/api/sample-identify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filename }),
       });
-      let data = await res.json();
-
-      // If server returned no route, run client OCR fallback on sample image
-      if (res.ok && (data.status === "no_route" || !data.route)) {
-        try {
-          const sampleBlob = await fetch(`/test_images/${filename}`).then(r => r.blob());
-          const clientOcr = await runClientOcrFallback(sampleBlob);
-          if (clientOcr && clientOcr.text) {
-            showLoading("RESOLVING ROUTE & DESTINATION FROM CLIENT OCR...");
-            const retryRes = await fetch("/api/sample-identify", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                filename,
-                client_ocr_text: clientOcr.text,
-                client_ocr_conf: clientOcr.conf,
-                client_ocr_ms: clientOcr.elapsedMs,
-              }),
-            });
-            if (retryRes.ok) {
-              data = await retryRes.json();
-            }
-          }
-        } catch (sampleErr) {
-          console.warn("Sample client OCR error:", sampleErr);
-        }
-      }
-
+      const data = await res.json();
       hideLoading();
+
       if (!res.ok) {
         alert(data.error || "Failed to process sample image.");
         return;
@@ -1844,14 +1791,17 @@
     try {
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
+        window.speechSynthesis.resume();
         const utter = new SpeechSynthesisUtterance(phrase);
         utter.rate = 0.95;
         utter.pitch = 1.0;
         const voices = window.speechSynthesis.getVoices();
-        const found = voices.find(v => v.lang.startsWith("en-IN")) ||
-                      voices.find(v => v.lang.startsWith("en-US")) ||
-                      voices.find(v => v.lang.startsWith("en"));
-        if (found) utter.voice = found;
+        if (voices && voices.length > 0) {
+          const found = voices.find(v => v.lang && (v.lang.startsWith("en-IN") || v.lang.startsWith("en_IN"))) ||
+                        voices.find(v => v.lang && (v.lang.startsWith("en-US") || v.lang.startsWith("en_US"))) ||
+                        voices.find(v => v.lang && v.lang.startsWith("en"));
+          if (found) utter.voice = found;
+        }
         window.speechSynthesis.speak(utter);
       }
     } catch (e) {

@@ -137,22 +137,37 @@ class RouteLookup:
         return route
 
     def resolve_route_from_text(self, raw_text: str) -> Optional[str]:
-        """Infers the route number if prominent destination names appear in the OCR text."""
+        """Infers the route number if prominent destination names appear in the OCR text.
+        Supports fuzzy matching so minor OCR spelling errors (e.g. CANNAVARAN -> GANNAVARAM)
+        resolve to the correct route.
+        """
         if not raw_text:
             return None
         import re
         text_upper = raw_text.upper()
+        text_tokens = [tok for tok in re.split(r'[\s,\-/()!|:;]+', text_upper) if len(tok) >= 3]
         all_routes = getattr(self, "all_cities_routes", self.routes)
         best_match = None
         best_score = 0
         stop_words = {"ROAD", "GATE", "STOP", "STAND", "CITY", "TOWN", "MAIN", "NEAR", "STATION"}
+
+        def word_matches(target_word: str) -> bool:
+            if target_word in text_upper:
+                return True
+            if len(target_word) >= 5:
+                for t in text_tokens:
+                    if abs(len(t) - len(target_word)) <= 3 and len(t) >= 4:
+                        if difflib.SequenceMatcher(None, target_word, t).ratio() >= 0.72:
+                            return True
+            return False
+
         for r_num, dest in all_routes.items():
             dest_words = [w.strip() for w in re.split(r'[\s,\-/()]+', dest.upper()) if len(w.strip()) >= 4]
             dest_words = [w for w in dest_words if w not in stop_words]
             if not dest_words:
                 continue
-            matches = sum(1 for w in dest_words if w in text_upper)
-            has_strong_word = any(w in text_upper for w in dest_words if len(w) >= 6)
+            matches = sum(1 for w in dest_words if word_matches(w))
+            has_strong_word = any(word_matches(w) for w in dest_words if len(w) >= 6)
             if (matches >= 2 or (matches >= 1 and has_strong_word)) and matches > best_score:
                 best_score = matches
                 best_match = r_num

@@ -244,12 +244,34 @@ def _extract_with_tesseract(binary_image: np.ndarray, raw_frame: Optional[np.nda
     t0 = time.monotonic()
     try:
         raw_text, mean_conf = _tesseract_pass(binary_image, config.TESSERACT_PSM_PRIMARY)
+        route = _parse_route(raw_text)
+
+        # If primary PSM 7 found no route or little text, try PSM 6 (uniform text block)
+        if not route or len(raw_text) < 3:
+            text_p6, conf_p6 = _tesseract_pass(binary_image, 6)
+            if text_p6:
+                route_p6 = _parse_route(text_p6)
+                if route_p6 or len(text_p6) > len(raw_text):
+                    raw_text, mean_conf = text_p6, conf_p6
+                    if route_p6:
+                        route = route_p6
+
+        # If still no route and raw_frame is provided, run on raw_frame
+        if not route and raw_frame is not None and raw_frame.size > 0:
+            text_raw, conf_raw = _tesseract_pass(raw_frame, 6)
+            if text_raw:
+                route_raw = _parse_route(text_raw)
+                raw_text = (raw_text + " " + text_raw).strip() if raw_text else text_raw
+                mean_conf = max(mean_conf, conf_raw)
+                if route_raw:
+                    route = route_raw
+
+        # Fallback to sparse text PSM 11 if still empty
         if not raw_text:
             raw_text, mean_conf = _tesseract_pass(binary_image, config.TESSERACT_PSM_FALLBACK)
+            route = _parse_route(raw_text)
 
-        route = _parse_route(raw_text)
         elapsed = time.monotonic() - t0
-
         return OcrResult(raw_text, route, mean_conf, "tesseract", elapsed)
     except pytesseract.pytesseract.TesseractNotFoundError as e:
         # This is the one case where "fall back to Windows OCR" is actually the
