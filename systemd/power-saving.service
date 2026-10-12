@@ -1,0 +1,13 @@
+[Unit]
+Description=Idle power-saving tweaks (HDMI off, CPU governor, BT off)
+Before=bus-route-identifier.service
+DefaultDependencies=no
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/pi/bus-route-identifier/scripts/power_saving.sh
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target

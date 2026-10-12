@@ -34,9 +34,11 @@ from feedback import (
     announce_no_text,
     announce_low_battery,
     announce_critical_battery,
+    speak,
 )
 from power import BatteryMonitor
 from routes import RouteLookup
+from esp32_interface import ESP32Interface
 
 try:
     from gpiozero import Button
@@ -66,6 +68,7 @@ class BusRouteIdentifier:
 
         self._processing = False
         self._last_trigger_time = 0.0
+        self.last_spoken_phrase = None
         config.LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_log_header()
         self.battery_monitor = BatteryMonitor(
@@ -78,6 +81,14 @@ class BusRouteIdentifier:
         )
         self.route_lookup.startup_complete = True
 
+        # DrishtiCap ESP32 Serial Interface for 1-Button Gestures & ToF Direction
+        self.esp32 = ESP32Interface(
+            port=config.SERIAL_PORT,
+            baudrate=config.SERIAL_BAUDRATE,
+            on_capture_ocr=self._on_button_pressed,
+            on_replay_audio=self.replay_last_announcement,
+            on_direction_detected=self.handle_direction_detected,
+        )
 
     def _ensure_log_header(self):
         if not config.LOG_PATH.exists():
@@ -89,15 +100,47 @@ class BusRouteIdentifier:
     def start(self):
         self.camera.start()
         self.battery_monitor.start()
+        self.esp32.start()
         if self.button:
             self.button.when_pressed = self._on_button_pressed
-            logger.info("Ready. Waiting for button presses on GPIO %s.", config.BUTTON_PIN)
+            logger.info("Ready. Waiting for button presses (GPIO %s or ESP32 Serial).", config.BUTTON_PIN)
         else:
-            logger.warning("gpiozero not available — running in no-GPIO dev mode.")
+            logger.info("Ready. Waiting for ESP32 Serial 1-button triggers.")
 
     def stop(self):
         self.camera.stop()
         self.battery_monitor.stop()
+        self.esp32.stop()
+
+    def replay_last_announcement(self):
+        """Triggered by 2 clicks (double click): replays the last spoken message."""
+        if self.last_spoken_phrase:
+            logger.info("Replaying last announcement: '%s'", self.last_spoken_phrase)
+            self.haptic.success()
+            self.esp32.send_haptic("success")
+            speak(self.last_spoken_phrase)
+        else:
+            logger.info("No announcement in buffer to replay.")
+            speak("No previous announcement to replay.")
+
+    def handle_direction_detected(self, data: dict):
+        """Triggered by long press: announces the approaching bus direction and distance."""
+        direction = data.get("direction", "clear")
+        dist_cm = data.get("distance_cm", 0)
+        dist_m = round(dist_cm / 100.0, 1)
+
+        if direction == "left":
+            phrase = config.PHRASE_APPROACH_LEFT.format(dist=dist_m)
+        elif direction == "right":
+            phrase = config.PHRASE_APPROACH_RIGHT.format(dist=dist_m)
+        elif direction == "front":
+            phrase = config.PHRASE_APPROACH_FRONT.format(dist=dist_m)
+        else:
+            phrase = config.PHRASE_APPROACH_CLEAR
+
+        logger.info("Directional Announcement: '%s'", phrase)
+        self.last_spoken_phrase = phrase
+        speak(phrase)
 
     def _on_button_pressed(self):
         now = time.monotonic()
@@ -114,6 +157,7 @@ class BusRouteIdentifier:
         except Exception:
             logger.exception("Pipeline run failed")
             self.haptic.error()
+            self.esp32.send_haptic("error")
         finally:
             self._processing = False
 
@@ -137,14 +181,27 @@ class BusRouteIdentifier:
         ocr_s = time.monotonic() - t0
 
         t0 = time.monotonic()
+        phrase = None
         if result.route is None:
+            phrase = config.PHRASE_NO_TEXT
+            self.esp32.send_haptic("error")
             announce_no_text(self.haptic)
         elif result.confidence < config.OCR_MIN_CONFIDENCE:
+            phrase = config.PHRASE_LOW_CONFIDENCE
+            self.esp32.send_haptic("low_conf")
             announce_low_confidence(self.haptic)
         else:
             destination = self.route_lookup.lookup(result.route)
+            if destination:
+                phrase = config.PHRASE_ROUTE_WITH_DESTINATION_TEMPLATE.format(route=result.route, destination=destination)
+            else:
+                phrase = config.PHRASE_ROUTE_TEMPLATE.format(route=result.route)
+            self.esp32.send_haptic("success")
             announce_route(result.route, self.haptic, destination)
         feedback_s = time.monotonic() - t0
+
+        if phrase:
+            self.last_spoken_phrase = phrase
 
 
         total_s = time.monotonic() - t_start

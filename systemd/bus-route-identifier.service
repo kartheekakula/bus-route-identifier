@@ -1,0 +1,20 @@
+[Unit]
+Description=Edge-OCR Bus Route Identifier
+After=multi-user.target sound.target power-saving.service
+Wants=sound.target
+Requires=power-saving.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/bus-route-identifier
+ExecStart=/home/pi/bus-route-identifier/.venv/bin/python3 /home/pi/bus-route-identifier/main.py
+Restart=on-failure
+RestartSec=2
+# Give the camera/audio subsystems a moment after boot before we grab them
+ExecStartPre=/bin/sleep 5
+StandardOutput=append:/home/pi/bus-route-identifier/logs/service.log
+StandardError=append:/home/pi/bus-route-identifier/logs/service.log
+
+[Install]
+WantedBy=multi-user.target

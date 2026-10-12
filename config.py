@@ -57,6 +57,10 @@ ADAPTIVE_THRESH_C = 12
 UPSCALE_FACTOR = 1.0
 
 # --------------------------------------------------------------------------
+# OCR & OBJECT DETECTION (YOLOv8)
+# --------------------------------------------------------------------------
+USE_YOLOV8_DETECTION = True       # Detect oncoming bus & isolate placard ROI
+YOLOV8_MODEL_PATH = "models/yolov8n.onnx"
 OCR_ENGINE = "tesseract" if os.environ.get("VERCEL") else "paddleocr"
 
 
@@ -108,24 +112,10 @@ TESSERACT_PSM_FALLBACK = 11
 TESSERACT_WHITELIST = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/- "
 OCR_MIN_CONFIDENCE = 45  # 0-100, Tesseract mean word confidence; below this -> "unclear" feedback
 
-# Route-number pattern: 1-3 digits, optionally followed by a single letter
-# suffix (e.g. "12", "21C", "500A"), which may itself carry a branch number
-# with or without a separator ("3C/1", "3C1" — boards print both).
-#
-# The trailing digits are only allowed *after* a letter. Without that
-# restriction the pattern would swallow 4-digit licence-plate groups like
-# "0385" or "5522", which sit right next to the route board on most buses.
-ROUTE_REGEX = r"\b\d{1,3}(?:[A-Z](?:/?\d{1,2})?)?\b"
-
-# Detected text matching this is a vehicle registration plate, never a route.
-PLATE_REGEX = r"\b[A-Z]{2}\s*\d{1,2}\s*[A-Z]{1,3}\s*\d{1,4}\b"
-
-# Scene photos are downscaled to this longest edge before detection. Chosen by
-# sweep: a route placard occupying ~2% of a 2586x3312 phone photo is still read
-# at 2000px (0.59s) but is lost at 1600px, while full resolution only costs
-# more time (1.28s) for no extra reads. Camera frames are 640x480 and are never
-# downscaled, so this only affects uploaded photos.
-OCR_MAX_DIM = 2000
+# Route-number pattern: 1-3 digits optionally followed by a single letter
+# suffix (e.g. "12", "21C", "500A"), optionally with a "/" branch suffix
+# like "21C/1".
+ROUTE_REGEX = r"\b\d{1,3}[A-Z]?(?:/\d{1,2})?\b"
 
 # --------------------------------------------------------------------------
 # AUDIO / FEEDBACK
@@ -154,6 +144,16 @@ COMMON_ROUTES = ["12", "21C", "45", "100", "500A"]  # seed list — edit to your
 PHRASE_NO_TEXT = "No route detected. Please try again."
 PHRASE_LOW_CONFIDENCE = "Unclear. Please hold steady and try again."
 PHRASE_ROUTE_TEMPLATE = "Bus {route}"
+
+# --------------------------------------------------------------------------
+# DRISHTICAP: ESP32 SERIAL & DIRECTIONAL TOF SETTINGS
+# --------------------------------------------------------------------------
+SERIAL_PORT = None       # Auto-detects /dev/ttyUSB* or COM* port
+SERIAL_BAUDRATE = 115200
+PHRASE_APPROACH_LEFT = "Bus approaching from your left, about {dist} meters."
+PHRASE_APPROACH_RIGHT = "Bus approaching from your right, about {dist} meters."
+PHRASE_APPROACH_FRONT = "Bus arriving directly in front, about {dist} meters."
+PHRASE_APPROACH_CLEAR = "Area clear. No oncoming vehicle detected."
 
 # --------------------------------------------------------------------------
 # ROUTE LOOKUP & DATA

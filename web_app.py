@@ -12,7 +12,6 @@ import csv
 import io
 import logging
 import re
-import sys
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -43,6 +42,7 @@ app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32MB max upload
 logger.info("Initializing RouteLookup for web service...")
 route_lookup = RouteLookup(routes_dir=config.ROUTES_DATA_DIR, city=config.CITY)
 route_lookup.startup_complete = True
+_last_spoken_phrase: Optional[str] = None
 
 # --- STARTUP OCR ENGINE CHECK ---
 # Print this loudly and unconditionally: if the server is silently running on
@@ -64,27 +64,6 @@ except Exception as e:
         "Tesseract-OCR and ensure it's on PATH.\n" + "=" * 70,
         type(e).__name__, e, config.TESSERACT_CMD,
     )
-
-# The check above only covers the *fallback* engine. Tesseract being healthy
-# says nothing about whether the engine we actually intend to use loaded, and a
-# silent downgrade here looks identical to "the OCR is just bad": every upload
-# comes back low-confidence and the device announces "unclear".
-if config.OCR_ENGINE == "paddleocr":
-    try:
-        import rapidocr_onnxruntime  # noqa: F401
-        logger.info("OCR ENGINE READY: rapidocr_onnxruntime (PP-OCRv4 detection + recognition)")
-    except ImportError:
-        logger.warning(
-            "\n" + "=" * 70 + "\n"
-            "OCR ENGINE DEGRADED: config.OCR_ENGINE is 'paddleocr' but\n"
-            "rapidocr_onnxruntime is not installed in this interpreter:\n"
-            "  %s\n"
-            "Falling back to Tesseract, which cannot locate text in a scene\n"
-            "photo -- it reads 1 of the 8 benchmark images instead of 7, so\n"
-            "almost every upload will come back 'unclear'. Install it with:\n"
-            "  pip install -r requirements-ocr.txt\n" + "=" * 70,
-            sys.executable,
-        )
 
 # Ensure timing log exists (gracefully handle read-only filesystems on serverless)
 try:
@@ -223,6 +202,9 @@ def run_pipeline_instrumented(frame: np.ndarray, capture_s: float = 0.0,
             # alone when it's real but uncatalogued, rather than guessing a destination.
             phrase = config.PHRASE_ROUTE_TEMPLATE.format(route=corrected_route)
         haptic_name = "success_pattern (150ms single pulse)"
+
+    global _last_spoken_phrase
+    _last_spoken_phrase = phrase
 
     # Check audio cache hit
     safe_name = corrected_route.replace("/", "-") if corrected_route else ""
@@ -515,6 +497,100 @@ def run_benchmark():
         "avg_latency_ms": avg_latency_ms,
         "budget_total_ms": config.BUDGET_TOTAL * 1000,
         "records": records,
+    })
+
+
+@app.route("/api/drishti/direction", methods=["POST"])
+def drishti_direction():
+    """
+    Evaluates 4x VL53L0X ToF readings [d0, d1, d2, d3] (in cm, max 200cm).
+    Determines bus arrival sector (left, front, right, clear),
+    assigns spatial headband haptic motors, and generates voice announcement.
+    """
+    global _last_spoken_phrase
+    data = request.get_json(silent=True) or {}
+    sensors = data.get("sensors")
+
+    # If sensors not explicitly provided, accept a direct 'direction' override or generate realistic defaults
+    if not sensors or len(sensors) != 4:
+        direction_hint = data.get("direction", "front").lower()
+        if direction_hint == "left":
+            sensors = [65, 95, 180, 200]
+        elif direction_hint == "right":
+            sensors = [200, 190, 85, 55]
+        elif direction_hint == "front":
+            sensors = [140, 70, 75, 145]
+        else:
+            sensors = [200, 200, 200, 200]
+
+    d0, d1, d2, d3 = [float(s) for s in sensors]
+    min_dist = min(d0, d1, d2, d3)
+    closest_idx = [d0, d1, d2, d3].index(min_dist)
+
+    direction = "clear"
+    if min_dist <= 200.0:  # VL53L0X 2-meter threshold
+        if closest_idx == 0:
+            direction = "left"
+        elif closest_idx == 1:
+            if d2 <= 200.0 and abs(d1 - d2) < 30.0:
+                direction = "front"
+            else:
+                direction = "left"
+        elif closest_idx == 2:
+            if d1 <= 200.0 and abs(d1 - d2) < 30.0:
+                direction = "front"
+            else:
+                direction = "right"
+        elif closest_idx == 3:
+            direction = "right"
+
+    dist_m = round(min_dist / 100.0, 1)
+
+    if direction == "left":
+        phrase = config.PHRASE_APPROACH_LEFT.format(dist=dist_m)
+        active_motors = [0, 1]  # Motor 0 (Left) -> Motor 1 (Front-Left)
+        haptic_desc = "Directional pulse: Motor 0 (Left) -> Motor 1 (Front-Left)"
+    elif direction == "right":
+        phrase = config.PHRASE_APPROACH_RIGHT.format(dist=dist_m)
+        active_motors = [4, 3]  # Motor 4 (Right) -> Motor 3 (Front-Right)
+        haptic_desc = "Directional pulse: Motor 4 (Right) -> Motor 3 (Front-Right)"
+    elif direction == "front":
+        phrase = config.PHRASE_APPROACH_FRONT.format(dist=dist_m)
+        active_motors = [1, 3, 2]  # Motor 1 & 3 dual pulse -> Motor 2 (Center)
+        haptic_desc = "Frontal pulse: Motors 1 & 3 -> Motor 2 (Front-Center)"
+    else:
+        phrase = config.PHRASE_APPROACH_CLEAR
+        active_motors = [2]
+        haptic_desc = "Double tap: Motor 2 (Front-Center) - Area Clear"
+
+    _last_spoken_phrase = phrase
+
+    return jsonify({
+        "direction": direction,
+        "closest_sensor": closest_idx,
+        "min_distance_cm": min_dist,
+        "distance_m": dist_m,
+        "sensors_cm": [d0, d1, d2, d3],
+        "active_motors": active_motors,
+        "haptic_pattern": haptic_desc,
+        "spoken_phrase": phrase,
+    })
+
+
+@app.route("/api/drishti/replay", methods=["GET", "POST"])
+def drishti_replay():
+    """Returns the last spoken announcement buffer (triggered by 2 clicks)."""
+    global _last_spoken_phrase
+    if _last_spoken_phrase:
+        return jsonify({
+            "status": "success",
+            "phrase": _last_spoken_phrase,
+            "has_content": True,
+        })
+    return jsonify({
+        "status": "empty",
+        "phrase": "No previous announcement to replay.",
+        "has_content": False,
     })
 
 

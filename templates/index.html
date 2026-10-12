@@ -678,6 +678,232 @@
       letter-spacing: 1px;
     }
 
+    /* --- DRISHTICAP 1-BUTTON & TOF RADAR STYLES --- */
+    .drishticap-section {
+      padding: 24px 32px;
+      background: #F7F1E3;
+    }
+    .drishti-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .drishti-title {
+      font-family: 'Archivo Black', sans-serif;
+      font-size: 20px;
+      text-transform: uppercase;
+      color: var(--ink-black);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .hardware-badge {
+      background: #2D3748;
+      color: #EDF2F7;
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      letter-spacing: 1px;
+    }
+    .gesture-controls-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .gesture-card {
+      background: #EFE8D6;
+      border: 2px solid #D5CBB8;
+      border-radius: 8px;
+      padding: 14px 16px;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      text-align: left;
+    }
+    .gesture-card:hover {
+      border-color: var(--vermilion-start);
+      background: #FFF;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 14px rgba(0,0,0,0.08);
+    }
+    .gesture-card:active {
+      transform: translateY(0);
+    }
+    .gesture-badge {
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      font-weight: 800;
+      color: #FFF;
+      background: #A83812;
+      padding: 2px 6px;
+      border-radius: 3px;
+      display: inline-block;
+      width: fit-content;
+      text-transform: uppercase;
+    }
+    .gesture-name {
+      font-family: 'Archivo Black', sans-serif;
+      font-size: 15px;
+      color: var(--ink-black);
+      text-transform: uppercase;
+    }
+    .gesture-desc {
+      font-size: 12px;
+      color: var(--ink-muted);
+      line-height: 1.35;
+    }
+    .radar-visual-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 20px;
+      align-items: center;
+      background: #E9E1CD;
+      border: 1px solid #D3C8B4;
+      border-radius: 10px;
+      padding: 20px;
+      margin-top: 14px;
+    }
+    @media (max-width: 768px) {
+      .radar-visual-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .cap-radar-stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    .cap-hud-title {
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #6C5B45;
+      margin-bottom: 10px;
+      letter-spacing: 1px;
+    }
+    .tof-beams-row {
+      display: flex;
+      justify-content: space-between;
+      width: 100%;
+      max-width: 380px;
+      margin-bottom: 12px;
+      gap: 6px;
+    }
+    .tof-pill {
+      flex: 1;
+      background: #3B332A;
+      color: #F7D070;
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      padding: 6px 4px;
+      border-radius: 6px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      transition: all 0.25s ease;
+      border: 1px solid #574B3E;
+    }
+    .tof-pill.active {
+      background: #E85D2C;
+      color: #FFF;
+      box-shadow: 0 0 12px rgba(232, 93, 44, 0.6);
+      border-color: #FFA57D;
+      transform: scale(1.05);
+    }
+    .haptic-ring-visual {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      max-width: 360px;
+      margin-top: 10px;
+    }
+    .haptic-node {
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      padding: 4px 8px;
+      border-radius: 20px;
+      background: #D8CEB8;
+      color: #554834;
+      border: 1px solid #BEB29A;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.2s ease;
+    }
+    .haptic-node.buzzing {
+      background: #1B7A3E;
+      color: #FFF;
+      border-color: #2ED573;
+      box-shadow: 0 0 10px rgba(46, 213, 115, 0.7);
+      animation: haptic-buzz 0.2s infinite alternate;
+    }
+    @keyframes haptic-buzz {
+      0% { transform: translateY(-1px) scale(1.02); }
+      100% { transform: translateY(1px) scale(0.98); }
+    }
+    .radar-telemetry-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .radar-status-box {
+      background: #1C1917;
+      color: #F5EFE0;
+      border-radius: 8px;
+      padding: 14px;
+      font-family: 'Space Mono', monospace;
+      border-left: 4px solid var(--mustard-amber);
+    }
+    .radar-status-label {
+      font-size: 10px;
+      color: #A8A29E;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .radar-status-val {
+      font-size: 16px;
+      font-weight: 700;
+      color: #FFB800;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .sim-presets-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .sim-btn {
+      background: #D8CEB8;
+      border: 1px solid #BAAF99;
+      color: var(--ink-black);
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 6px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: all 0.15s ease;
+    }
+    .sim-btn:hover {
+      background: var(--mustard-amber);
+      border-color: #CCA030;
+    }
+
     /* Responsive */
     @media (max-width: 640px) {
       .header-card, .upload-section, .result-ticket, .benchmark-section {
@@ -731,6 +957,111 @@
       <span class="barcode-caption">SERIAL NO: RT-2026-98357</span>
     </div>
   </header>
+
+  <!-- DRISHTICAP 1-BUTTON & TOF RADAR HARDWARE HUB -->
+  <section class="ticket-stub drishticap-section" id="drishticap-hardware-card">
+    <div class="drishti-header">
+      <div class="drishti-title">
+        <span>DRISHTICAP HARDWARE HUB</span>
+        <span class="hardware-badge">ESP32 + PI 4</span>
+      </div>
+      <span style="font-family:'Space Mono',monospace; font-size:11px; color:#78350F; font-weight:700;">
+        1-BUTTON TACTILE CONTROLLER • 4x VL53L0X ToF • 6-ZONE HAPTICS
+      </span>
+    </div>
+
+    <!-- 1-Button 3 Gesture Simulator Cards -->
+    <div class="gesture-controls-strip">
+      <div class="gesture-card" id="btn-gesture-single" title="Click to simulate 1 click on the cap button">
+        <span class="gesture-badge">1 CLICK (SHORT)</span>
+        <span class="gesture-name">📸 CAPTURE & IDENTIFY</span>
+        <span class="gesture-desc">Trigger camera in-memory capture, OpenCV filter, OCR, and speak route number</span>
+      </div>
+
+      <div class="gesture-card" id="btn-gesture-double" title="Click to simulate 2 clicks on the cap button">
+        <span class="gesture-badge" style="background:#2563EB;">2 CLICKS (DOUBLE)</span>
+        <span class="gesture-name">🔁 REPLAY AUDIO</span>
+        <span class="gesture-desc">Replay last spoken announcement from memory without repeating OCR</span>
+      </div>
+
+      <div class="gesture-card" id="btn-gesture-long" title="Click to simulate long press on the cap button">
+        <span class="gesture-badge" style="background:#7C3AED;">LONG PRESS (≥1s)</span>
+        <span class="gesture-name">🧭 TOF BUS DIRECTION</span>
+        <span class="gesture-desc">Scan 4x VL53L0X ToF sensors to detect which side the bus is approaching from</span>
+      </div>
+    </div>
+
+    <!-- Top-Down Cap Radar & Spatial Haptics Visualization -->
+    <div class="radar-visual-grid">
+      <div class="cap-radar-stage">
+        <div class="cap-hud-title">TOP-DOWN CAP HUD: 4x VL53L0X ToF & 6-ZONE HAPTICS</div>
+
+        <!-- 4 VL53L0X ToF Sensor Beams -->
+        <div class="tof-beams-row">
+          <div class="tof-pill" id="tof-node-0">
+            <span>CH 0 (LEFT 60°)</span>
+            <strong id="tof-val-0">180 cm</strong>
+          </div>
+          <div class="tof-pill" id="tof-node-1">
+            <span>CH 1 (F-LEFT 20°)</span>
+            <strong id="tof-val-1">160 cm</strong>
+          </div>
+          <div class="tof-pill" id="tof-node-2">
+            <span>CH 2 (F-RIGHT 20°)</span>
+            <strong id="tof-val-2">175 cm</strong>
+          </div>
+          <div class="tof-pill" id="tof-node-3">
+            <span>CH 3 (RIGHT 60°)</span>
+            <strong id="tof-val-3">190 cm</strong>
+          </div>
+        </div>
+
+        <!-- Styled Cap Representation -->
+        <div style="width:160px; height:85px; background:#292524; border-radius:80px 80px 10px 10px; border:3px solid #78716C; display:flex; align-items:center; justify-content:center; flex-direction:column; color:#E7E5E4; font-family:'Space Mono',monospace; font-size:10px; box-shadow:0 8px 18px rgba(0,0,0,0.25);">
+          <span style="color:#F59E0B; font-weight:800; font-size:11px;">[CAM VISOR]</span>
+          <span>CAP HEADBAND</span>
+        </div>
+
+        <!-- 6 Headband Vibration Motors -->
+        <div class="haptic-ring-visual">
+          <div class="haptic-node" id="motor-node-0">⚡ M0: Left</div>
+          <div class="haptic-node" id="motor-node-1">⚡ M1: F-Left</div>
+          <div class="haptic-node" id="motor-node-2">⚡ M2: Center</div>
+          <div class="haptic-node" id="motor-node-3">⚡ M3: F-Right</div>
+          <div class="haptic-node" id="motor-node-4">⚡ M4: Right</div>
+          <div class="haptic-node" id="motor-node-5">⚡ M5: Rear</div>
+        </div>
+      </div>
+
+      <!-- Live Directional Telemetry & Test Presets -->
+      <div class="radar-telemetry-panel">
+        <div class="radar-status-box">
+          <div class="radar-status-label">LATEST DIRECTIONAL STATUS</div>
+          <div class="radar-status-val" id="drishti-status-display">
+            <span>STANDBY</span>
+          </div>
+          <div style="font-size:11px; color:#D6D3D1; margin-top:6px;" id="drishti-phrase-display">
+            Press Long Press or a simulation preset below
+          </div>
+          <div style="font-size:10px; color:#A8A29E; margin-top:4px;" id="drishti-haptic-display">
+            Active Haptics: Idle
+          </div>
+        </div>
+
+        <div>
+          <div style="font-family:'Space Mono',monospace; font-size:10px; color:#6B5D4D; font-weight:700; text-transform:uppercase; margin-bottom:4px;">
+            TEST SENSOR PRESETS:
+          </div>
+          <div class="sim-presets-row">
+            <button type="button" class="sim-btn" onclick="simulateToFDirection('left')">⬅ BUS ON LEFT (0.65m)</button>
+            <button type="button" class="sim-btn" onclick="simulateToFDirection('front')">⬆ BUS IN FRONT (0.7m)</button>
+            <button type="button" class="sim-btn" onclick="simulateToFDirection('right')">➡ BUS ON RIGHT (0.55m)</button>
+            <button type="button" class="sim-btn" onclick="simulateToFDirection('clear')">⭕ AREA CLEAR (2m)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <!-- UPLOAD / INPUT TICKET STUB -->
   <section class="ticket-stub upload-section" id="upload-card">
@@ -1389,13 +1720,118 @@
         tbody.appendChild(tr);
       });
 
+  // =========================================================================
+  // DRISHTICAP 1-BUTTON GESTURES & TOF DIRECTIONAL SIMULATION
+  // =========================================================================
+  const btnGestureSingle = document.getElementById("btn-gesture-single");
+  const btnGestureDouble = document.getElementById("btn-gesture-double");
+  const btnGestureLong = document.getElementById("btn-gesture-long");
+
+  // 1 CLICK: Trigger Route OCR on first sample or prompt file picker
+  if (btnGestureSingle) {
+    btnGestureSingle.addEventListener("click", () => {
+      buzzNode("motor-node-2", 150);
+      const firstChip = document.querySelector(".sample-chip");
+      if (firstChip) {
+        firstChip.click();
+      } else {
+        fileInput.click();
+      }
+    });
+  }
+
+  // 2 CLICKS: Replay Last Spoken Announcement
+  if (btnGestureDouble) {
+    btnGestureDouble.addEventListener("click", async () => {
+      buzzNode("motor-node-2", 80);
+      setTimeout(() => buzzNode("motor-node-2", 80), 120);
+
+      try {
+        const res = await fetch("/api/drishti/replay");
+        const data = await res.json();
+        const phrase = data.phrase || currentSpokenPhrase || "No previous announcement to replay.";
+        speakVoice(phrase);
+        document.getElementById("drishti-phrase-display").textContent = `Replaying: "${phrase}"`;
+      } catch (e) {
+        if (currentSpokenPhrase) speakVoice(currentSpokenPhrase);
+      }
+    });
+  }
+
+  // LONG PRESS: Directional Approach Scan
+  if (btnGestureLong) {
+    btnGestureLong.addEventListener("click", () => {
+      simulateToFDirection("front");
+    });
+  }
+
+  function buzzNode(id, durationMs = 250) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.add("buzzing");
+    setTimeout(() => el.classList.remove("buzzing"), durationMs);
+  }
+
+  window.simulateToFDirection = async function(direction) {
+    showLoading(`SCANNING 4x VL53L0X ToF SENSORS (${direction.toUpperCase()})...`);
+    try {
+      const res = await fetch("/api/drishti/direction", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ direction: direction })
+      });
+      const data = await res.json();
+      hideLoading();
+
+      // Update ToF distance indicators
+      if (data.sensors_cm) {
+        for (let i = 0; i < 4; i++) {
+          const pill = document.getElementById(`tof-node-${i}`);
+          const valEl = document.getElementById(`tof-val-${i}`);
+          if (pill && valEl) {
+            valEl.textContent = `${Math.round(data.sensors_cm[i])} cm`;
+            if (i === data.closest_sensor && data.direction !== "clear") {
+              pill.classList.add("active");
+            } else {
+              pill.classList.remove("active");
+            }
+          }
+        }
+      }
+
+      // Update Haptic Motor representations
+      document.querySelectorAll(".haptic-node").forEach(n => n.classList.remove("buzzing"));
+      if (data.active_motors) {
+        data.active_motors.forEach(mIdx => {
+          buzzNode(`motor-node-${mIdx}`, 1200);
+        });
+      }
+
+      // Update telemetry display
+      const statusEl = document.getElementById("drishti-status-display");
+      const phraseEl = document.getElementById("drishti-phrase-display");
+      const hapticEl = document.getElementById("drishti-haptic-display");
+
+      if (data.direction === "left") {
+        statusEl.innerHTML = `<span style="color:#E85D2C;">⬅ BUS ON LEFT (${data.distance_m}m)</span>`;
+      } else if (data.direction === "right") {
+        statusEl.innerHTML = `<span style="color:#E85D2C;">➡ BUS ON RIGHT (${data.distance_m}m)</span>`;
+      } else if (data.direction === "front") {
+        statusEl.innerHTML = `<span style="color:#1B7A3E;">⬆ BUS IN FRONT (${data.distance_m}m)</span>`;
+      } else {
+        statusEl.innerHTML = `<span style="color:#A8A29E;">⭕ AREA CLEAR (>2m)</span>`;
+      }
+
+      phraseEl.textContent = `"${data.spoken_phrase}"`;
+      hapticEl.textContent = `Active Haptics: ${data.haptic_pattern}`;
+
+      // Voice output
+      speakVoice(data.spoken_phrase);
     } catch (err) {
       hideLoading();
-      runBenchmarkBtn.disabled = false;
-      runBenchmarkBtn.textContent = "▶ RUN BATCH AUDIT";
-      alert("Benchmark execution error: " + err.message);
+      alert("Direction scan error: " + err.message);
     }
-  });
+  };
 
 </script>
 

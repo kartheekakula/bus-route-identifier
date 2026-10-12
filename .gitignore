@@ -16,3 +16,7 @@ scratch_*.py
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Archives and debug test crops
+*.zip
+test_images/debug_*
