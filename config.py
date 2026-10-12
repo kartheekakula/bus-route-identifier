@@ -61,7 +61,7 @@ UPSCALE_FACTOR = 1.0
 # --------------------------------------------------------------------------
 USE_YOLOV8_DETECTION = True       # Detect oncoming bus & isolate placard ROI
 YOLOV8_MODEL_PATH = "models/yolov8n.onnx"
-OCR_ENGINE = "tesseract" if os.environ.get("VERCEL") else "paddleocr"
+OCR_ENGINE = os.environ.get("OCR_ENGINE", "tesseract" if os.environ.get("VERCEL") else "paddleocr")
 
 
 def _detect_tesseract_cmd() -> str:

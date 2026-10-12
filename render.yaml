@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: bus-route-identifier
+    runtime: docker
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: OCR_ENGINE
+        value: tesseract

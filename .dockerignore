@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+env
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+Thumbs.db
+logs/*.csv
+*.log
+test_images/debug_*
+*.zip
+firmware
