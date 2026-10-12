@@ -49,19 +49,84 @@ class OcrResult:
 
 
 _paddle_engine = None
+_paddle_init_failed = False
 
 
 def _get_paddle_engine():
-    global _paddle_engine
+    global _paddle_engine, _paddle_init_failed
+    if _paddle_init_failed:
+        return None
     if _paddle_engine is None:
         try:
             from rapidocr_onnxruntime import RapidOCR
             _paddle_engine = RapidOCR()
             logger.info("PaddleOCR (PP-OCRv4 ONNX Runtime) initialized successfully.")
         except Exception as e:
+            # Latch the failure. Retrying the import on every button press costs
+            # time on the hot path and floods the log with the same warning.
+            _paddle_init_failed = True
             logger.warning("PaddleOCR initialization failed: %s", e)
             return None
     return _paddle_engine
+
+
+def _detection_height(box) -> float:
+    try:
+        ys = [float(p[1]) for p in box]
+        return max(ys) - min(ys)
+    except Exception:
+        return 0.0
+
+
+def _score_candidate(route: str, text: str, conf: float, rel_height: float) -> float:
+    """Rank how likely a route token found in `text` is the actual route board.
+
+    A route board is typically the largest text in frame, read confidently, and
+    standing alone or leading its line ("55K", "231 AUTO NAGAR"). A route-shaped
+    token buried mid-string is usually part of an ad, a plate, or a slogan.
+    """
+    compact = re.sub(r"[^A-Z0-9/]", "", text.upper())
+    score = conf + 0.25 * rel_height
+    if compact == route:
+        score += 0.35
+    elif compact.startswith(route):
+        score += 0.15
+    if re.search(config.PLATE_REGEX, text.upper()):
+        score -= 0.40
+    return score
+
+
+def _select_best_route(detections, frame_height: int):
+    """Pick the most plausible route from per-detection OCR output.
+
+    `detections` is a list of (text, confidence 0-1, box). Returns
+    (route, confidence 0-100) where the confidence belongs to the winning
+    detection — averaging every detection in the frame would let a dozen
+    shopfront signs drown out a cleanly-read route board.
+    """
+    best = None
+    best_score = float("-inf")
+    heights = [_detection_height(b) for _, _, b in detections]
+    tallest = max(heights) if heights else 0.0
+
+    for (text, conf, _box), height in zip(detections, heights):
+        rel_height = (height / tallest) if tallest else 0.0
+        for route in _route_tokens(text):
+            score = _score_candidate(route, text, conf, rel_height)
+            if score > best_score:
+                best_score, best = score, (route, conf * 100.0)
+
+    return best if best else (None, 0.0)
+
+
+def _run_paddle_pass(engine, frame: np.ndarray):
+    """One detect+recognize pass. Returns (detections, raw_text)."""
+    res, _ = engine(frame)
+    if not res:
+        return [], ""
+    detections = [(line[1].strip(), float(line[2]), line[0]) for line in res if line[1].strip()]
+    raw_text = " ".join(text for text, _, _ in detections)
+    return detections, raw_text
 
 
 def _extract_with_paddleocr(frame: np.ndarray) -> OcrResult:
@@ -73,81 +138,69 @@ def _extract_with_paddleocr(frame: np.ndarray) -> OcrResult:
     try:
         h, w = frame.shape[:2]
         max_dim = max(h, w)
-        # Normalize high-res camera captures (<= 960 max dimension) for memory efficiency & speed
-        if max_dim > 960:
-            scale = 960.0 / max_dim
-            proc_frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-        else:
-            proc_frame = frame
 
-        res, _ = engine(proc_frame)
+        # Pass 1: the standard resize-to-budget frame. Good for the common case
+        # where the route board is a reasonably-sized fraction of the photo.
+        frame1 = frame
+        if max_dim > config.OCR_MAX_DIM:
+            scale = config.OCR_MAX_DIM / max_dim
+            frame1 = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        detections, raw_text = _run_paddle_pass(engine, frame1)
+        route, confidence = _select_best_route(detections, frame1.shape[0])
 
-        all_detections = res or []
-        if not all_detections and max_dim > 600:
-            # Fallback placard crop only if full frame found no text
-            ph, pw = proc_frame.shape[:2]
-            placard = proc_frame[int(0.2 * ph):int(0.6 * ph), int(0.1 * pw):int(0.9 * pw)]
-            if placard.size > 0:
-                p_res, _ = engine(placard)
-                if p_res:
-                    all_detections = p_res
+        # Pass 2 only runs if pass 1 found no valid route — small text is the
+        # near-universal reason a detector misses a real board, and it comes
+        # from two opposite situations that both need a *different* scale than
+        # the default budget resize:
+        #   - a small overall photo, where the board is already tiny in
+        #     absolute pixels (upscaling helps: more pixels for the same board)
+        #   - a very large/high-res photo, where the standard downscale to
+        #     OCR_MAX_DIM shrinks an already-small board even further
+        #     (retrying closer to native resolution helps)
+        # Bounded so one hard frame can't blow the latency budget unrecognizably.
+        if route is None:
+            if max_dim < 1000:
+                scale2 = 2.0
+            else:
+                scale2 = min(3200, max_dim) / max_dim
+            if abs(scale2 - 1.0) > 0.05:
+                frame2 = cv2.resize(frame, (int(w * scale2), int(h * scale2)), interpolation=cv2.INTER_CUBIC)
+                detections2, raw_text2 = _run_paddle_pass(engine, frame2)
+                route2, confidence2 = _select_best_route(detections2, frame2.shape[0])
+                if route2 is not None:
+                    route, confidence, raw_text = route2, confidence2, raw_text2
 
-        if not all_detections:
-            return OcrResult("", None, 0.0, "paddleocr", time.monotonic() - t0)
+        # Pass 3 (only if still nothing): scan overlapping native-resolution tiles.
+        # A route board that is ~2% of a phone photo is a few dozen pixels tall
+        # even before any downscale, and the detector's own resize can still
+        # drop it on a busy full frame. Cropping to a tile makes the board a
+        # bigger share of the detector's input. Measured: recovers "55K" on the
+        # 2586x3312 benchmark photo that passes 1 and 2 both miss. Skipped for
+        # small frames (camera 1280x720 and below) where tiling has nothing to add.
+        if route is None and max_dim >= 1500:
+            th, tw = int(h * 0.55), int(w * 0.55)
+            # Upper tiles first (the route board is on the bus's upper half) and
+            # stop at the first tile that yields a route, so the common case costs
+            # one tile, not four.
+            for ty in (0, h - th):
+                for tx in (0, w - tw):
+                    tile = frame[ty:ty + th, tx:tx + tw]
+                    det_t, raw_t = _run_paddle_pass(engine, tile)
+                    r_t, c_t = _select_best_route(det_t, tile.shape[0])
+                    if r_t is not None:
+                        route, confidence, raw_text = r_t, c_t, raw_t
+                        break
+                if route is not None:
+                    break
 
-        lines = []
-        confidences = []
-        for line in all_detections:
-            text = line[1].strip()
-            score = float(line[2]) * 100.0
-            if text and text not in lines:
-                lines.append(text)
-                confidences.append(score)
-
-        raw_text = " ".join(lines)
-        mean_conf = sum(confidences) / len(confidences) if confidences else 0.0
-        route = _parse_route(raw_text)
-        elapsed = time.monotonic() - t0
-
-        return OcrResult(raw_text, route, mean_conf, "paddleocr", elapsed, confidence_is_estimated=False)
+        return OcrResult(raw_text, route, confidence, "paddleocr", time.monotonic() - t0)
     except Exception as e:
         logger.error("PaddleOCR extraction error: %s", e, exc_info=True)
         return OcrResult("", None, 0.0, "paddleocr_error", time.monotonic() - t0)
 
 
-_yolo_detector = None
-
-
-def _get_yolo_detector():
-    global _yolo_detector
-    if _yolo_detector is None:
-        try:
-            from yolo_detector import YoloV8Detector
-            _yolo_detector = YoloV8Detector(
-                model_path=getattr(config, "YOLOV8_MODEL_PATH", "models/yolov8n.onnx")
-            )
-        except Exception as e:
-            logger.debug("YOLO detector not initialized: %s", e)
-    return _yolo_detector
-
-
 def extract_route(binary_image: np.ndarray, raw_frame: Optional[np.ndarray] = None) -> OcrResult:
     """Run OCR + regex parsing, returning the best route match found."""
-    # 1. If YOLOv8 is enabled and raw frame is provided, attempt bus placard isolation
-    if raw_frame is not None and getattr(config, "USE_YOLOV8_DETECTION", True):
-        detector = _get_yolo_detector()
-        if detector:
-            placard_crop, bbox, yolo_s = detector.detect_bus_placard(raw_frame)
-            if bbox is not None:
-                logger.info("YOLOv8 localized bus at %s in %.3fs -> cropped placard (%dx%d)",
-                            bbox, yolo_s, placard_crop.shape[1], placard_crop.shape[0])
-                import preprocessing
-                crop_bin = preprocessing.preprocess(placard_crop)
-                res = _extract_with_tesseract(crop_bin, raw_frame=placard_crop)
-                res.elapsed_s += yolo_s
-                if res.route:
-                    return res
-
     frame_to_use = raw_frame if raw_frame is not None else binary_image
 
     if config.OCR_ENGINE == "paddleocr":
@@ -245,34 +298,12 @@ def _extract_with_tesseract(binary_image: np.ndarray, raw_frame: Optional[np.nda
     t0 = time.monotonic()
     try:
         raw_text, mean_conf = _tesseract_pass(binary_image, config.TESSERACT_PSM_PRIMARY)
-        route = _parse_route(raw_text)
-
-        # If primary PSM 7 found no route or little text, try PSM 6 (uniform text block)
-        if not route or len(raw_text) < 3:
-            text_p6, conf_p6 = _tesseract_pass(binary_image, 6)
-            if text_p6:
-                route_p6 = _parse_route(text_p6)
-                if route_p6 or len(text_p6) > len(raw_text):
-                    raw_text, mean_conf = text_p6, conf_p6
-                    if route_p6:
-                        route = route_p6
-
-        # If still no route and raw_frame is provided, run on raw_frame
-        if not route and raw_frame is not None and raw_frame.size > 0:
-            text_raw, conf_raw = _tesseract_pass(raw_frame, 6)
-            if text_raw:
-                route_raw = _parse_route(text_raw)
-                raw_text = (raw_text + " " + text_raw).strip() if raw_text else text_raw
-                mean_conf = max(mean_conf, conf_raw)
-                if route_raw:
-                    route = route_raw
-
-        # Fallback to sparse text PSM 11 if still empty
         if not raw_text:
             raw_text, mean_conf = _tesseract_pass(binary_image, config.TESSERACT_PSM_FALLBACK)
-            route = _parse_route(raw_text)
 
+        route = _parse_route(raw_text)
         elapsed = time.monotonic() - t0
+
         return OcrResult(raw_text, route, mean_conf, "tesseract", elapsed)
     except pytesseract.pytesseract.TesseractNotFoundError as e:
         # This is the one case where "fall back to Windows OCR" is actually the
@@ -319,27 +350,39 @@ def _extract_with_easyocr(binary_image: np.ndarray) -> OcrResult:
     return OcrResult(raw_text, route, mean_conf, "easyocr", elapsed)
 
 
+_NON_ROUTE_WORDS = ("STOP", "KEEP", "DISTANCE", "FEET", "SPEED", "TATA",
+                    "LEYLAND", "APSRTC", "BMTC", "DTC")
+
+
+def _route_tokens(text: str) -> list:
+    """Every route-shaped token in `text`, most specific first.
+
+    Strips registration plates and painted bus markings first, so "AP31TE 5522"
+    and "KEEP 50 FEET DISTANCE" cannot masquerade as a route.
+    """
+    if not text:
+        return []
+
+    cleaned = re.sub(config.PLATE_REGEX, " ", text.upper())
+    cleaned = re.sub(r"\b(" + "|".join(_NON_ROUTE_WORDS) + r")\b", " ", cleaned)
+
+    seen, tokens = set(), []
+    for match in _ROUTE_PATTERN.findall(cleaned):
+        if match in ("0", "00", "O") or match in seen:
+            continue
+        seen.add(match)
+        tokens.append(match)
+    # Longer tokens carry more information ("55K" over "55"), so try them first.
+    tokens.sort(key=len, reverse=True)
+    return tokens
+
+
 def _parse_route(raw_text: str) -> Optional[str]:
-    """Pull the most plausible route token out of noisy OCR text."""
-    if not raw_text:
-        return None
+    """Pull the most plausible route token out of a flat OCR string.
 
-    # 1. Clean out common vehicle plate prefixes (e.g. AP16, DL1P, KA51, TS09) and bus markings (STOP, TATA, SPEED)
-    cleaned = re.sub(r'\b[A-Z]{2}\s*\d{1,2}\s*[A-Z]{0,2}\s*\d{0,4}\b', '', raw_text, flags=re.I)
-    cleaned = re.sub(r'\b(STOP|KEEP|DISTANCE|FEET|SPEED|TATA|LEYLAND|APSRTC|BMTC|DTC)\b', '', cleaned, flags=re.I)
-
-    # 2. Standard regex: 1-3 digits + optional single letter (e.g. 12, 500A, 21C, 764)
-    matches = _ROUTE_PATTERN.findall(cleaned.upper())
-    # Filter out lone 0 / O / STOP
-    matches = [m for m in matches if m not in ("0", "00", "O")]
-    if matches:
-        return max(matches, key=len)
-
-    # 3. Fallback search across original raw_text if cleaned was too aggressive
-    raw_matches = _ROUTE_PATTERN.findall(raw_text.upper())
-    raw_matches = [m for m in raw_matches if m not in ("0", "00", "O") and not re.match(r'^[A-Z]{2}\d+', m)]
-    if raw_matches:
-        return max(raw_matches, key=len)
-
-    return None
+    Used by the engines that return no per-detection geometry. When geometry is
+    available, `_select_best_route` makes a far better-informed choice.
+    """
+    tokens = _route_tokens(raw_text)
+    return tokens[0] if tokens else None
 

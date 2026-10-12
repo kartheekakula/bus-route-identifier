@@ -20,3 +20,6 @@ Thumbs.db
 # Archives and debug test crops
 *.zip
 test_images/debug_*
+
+models/*.onnx
+models/*.pt

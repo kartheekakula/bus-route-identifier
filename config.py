@@ -61,7 +61,7 @@ UPSCALE_FACTOR = 1.0
 # --------------------------------------------------------------------------
 # OCR & OBJECT DETECTION (YOLOv8)
 # --------------------------------------------------------------------------
-USE_YOLOV8_DETECTION = True       # Detect oncoming bus & isolate placard ROI
+USE_YOLOV8_DETECTION = False      # Not wired into the OCR path: measured no accuracy gain (see tools/benchmark_yolo.py)
 YOLOV8_MODEL_PATH = "models/yolov8n.onnx"
 OCR_ENGINE = os.environ.get("OCR_ENGINE", "tesseract" if os.environ.get("VERCEL") else "paddleocr")
 
@@ -111,13 +111,20 @@ TESSERACT_LANG = "eng"
 # --psm 11 is a fallback for sparse/scattered text if psm 7 returns nothing.
 TESSERACT_PSM_PRIMARY = 7
 TESSERACT_PSM_FALLBACK = 11
-TESSERACT_WHITELIST = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/- "
+TESSERACT_WHITELIST = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/- "
 OCR_MIN_CONFIDENCE = 45  # 0-100, Tesseract mean word confidence; below this -> "unclear" feedback
 
 # Route-number pattern: 1-3 digits optionally followed by a single letter
 # suffix (e.g. "12", "21C", "500A"), optionally with a "/" branch suffix
 # like "21C/1".
-ROUTE_REGEX = r"\b\d{1,3}[A-Z]?(?:/\d{1,2})?\b"
+ROUTE_REGEX = r"\b\d{1,3}(?:[A-Z](?:/?\d{1,2})?)?\b"
+
+# Detected text matching this is a vehicle registration plate, never a route.
+PLATE_REGEX = r"\b[A-Z]{2}\s*\d{1,2}\s*[A-Z]{1,3}\s*\d{1,4}\b"
+
+# Scene photos are downscaled to this longest edge before detection (sweep-chosen:
+# a placard ~2% of a phone photo is read at 2000px but lost at 1600px).
+OCR_MAX_DIM = 2000
 
 # --------------------------------------------------------------------------
 # AUDIO / FEEDBACK

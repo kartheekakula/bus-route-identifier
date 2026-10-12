@@ -12,6 +12,7 @@ import csv
 import io
 import logging
 import os
+import sys
 import re
 import time
 from pathlib import Path
@@ -66,6 +67,28 @@ except Exception as e:
         type(e).__name__, e, config.TESSERACT_CMD,
     )
 
+# The check above only covers the *fallback* engine. Tesseract being healthy
+# says nothing about whether the engine we actually intend to use loaded, and a
+# silent downgrade here looks identical to "the OCR is just bad": every upload
+# comes back low-confidence and the device announces "unclear".
+if config.OCR_ENGINE == "paddleocr":
+    try:
+        import rapidocr_onnxruntime  # noqa: F401
+        logger.info("OCR ENGINE READY: rapidocr_onnxruntime (PP-OCRv4 detection + recognition)")
+    except ImportError:
+        logger.warning(
+            "\n" + "=" * 70 + "\n"
+            "OCR ENGINE DEGRADED: config.OCR_ENGINE is 'paddleocr' but\n"
+            "rapidocr_onnxruntime is not installed in this interpreter:\n"
+            "  %s\n"
+            "Falling back to Tesseract, which cannot locate text in a scene\n"
+            "photo -- it reads 1 of the 8 benchmark images instead of 7, so\n"
+            "almost every upload will come back 'unclear'. Install it with:\n"
+            "  pip install -r requirements-ocr.txt\n" + "=" * 70,
+            sys.executable,
+        )
+
+
 # Ensure timing log exists (gracefully handle read-only filesystems on serverless)
 try:
     config.LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -104,11 +127,6 @@ def run_pipeline_instrumented(frame: np.ndarray, capture_s: float = 0.0,
     """
     t_start = time.monotonic()
     h, w = frame.shape[:2]
-    max_dim = max(h, w)
-    if max_dim > 1024:
-        scale = 1024.0 / max_dim
-        frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-        h, w = frame.shape[:2]
 
     # --- STAGE 1: PREPROCESSING ---
     t0 = time.monotonic()
@@ -172,8 +190,6 @@ def run_pipeline_instrumented(frame: np.ndarray, capture_s: float = 0.0,
         inferred = route_lookup.resolve_route_from_text(raw_text_clean)
         if inferred:
             raw_route = inferred
-            if ocr_result.confidence < config.OCR_MIN_CONFIDENCE:
-                ocr_result.confidence = max(ocr_result.confidence, 75.0)
 
     if raw_route:
         # A route number was parsed by the regex or resolved from destination text

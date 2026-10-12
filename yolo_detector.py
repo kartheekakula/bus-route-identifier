@@ -87,19 +87,19 @@ class YoloV8Detector:
         # 2. OpenCV DNN ONNX inference
         if self.net is not None:
             try:
-                blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, (640, 640), swapRB=True, crop=False)
+                blob, ratio, (pad_x, pad_y) = self._letterbox_blob(frame)
                 self.net.setInput(blob)
                 preds = self.net.forward()
 
                 # Process YOLOv8 output tensor [1, 84, 8400]
-                box = self._parse_yolov8_onnx(preds, w, h)
+                box = self._parse_yolov8_onnx(preds, w, h, ratio, pad_x, pad_y)
                 if box:
                     x, y, bw, bh = box
                     placard_crop = self._crop_placard(frame, x, y, bw, bh)
                     elapsed = time.monotonic() - t0
                     return placard_crop, box, elapsed
             except Exception as e:
-                logger.debug("OpenCV DNN forward pass error: %s", e)
+                logger.warning("OpenCV DNN forward pass error: %s", e)
 
         # 3. Adaptive Placard Fallback (windscreen center-top band where placards sit)
         # In a typical handheld cap posture, the oncoming bus route sign occupies
@@ -120,49 +120,67 @@ class YoloV8Detector:
 
         # Route board heuristic inside bus bounding box:
         # Top 10% to 50% vertical, middle 70% horizontal
-        py1 = by + int(0.12 * bh)
-        py2 = by + int(0.50 * bh)
-        px1 = bx + int(0.15 * bw)
-        px2 = bx + int(0.85 * bw)
+        # Destination/route board: top of the bus box (roof-mounted) down to the
+        # windscreen (rear/side-window placards sit lower), so take the top 60%.
+        py1 = by
+        py2 = by + int(0.60 * bh)
+        px1 = bx + int(0.03 * bw)
+        px2 = bx + int(0.97 * bw)
 
         crop = frame[py1:py2, px1:px2]
         if crop.size > 0 and crop.shape[0] > 20 and crop.shape[1] > 40:
             return crop
         return frame[by:by + bh, bx:bx + bw]
 
-    def _parse_yolov8_onnx(self, preds: np.ndarray, img_w: int, img_h: int) -> Optional[Tuple[int, int, int, int]]:
-        """Parses raw YOLOv8 [1, 84, 8400] output tensor to find the most prominent bus."""
+    @staticmethod
+    def _letterbox_blob(frame: np.ndarray, size: int = 640):
+        """Resize keeping aspect ratio and pad to size x size (what YOLOv8 was trained on).
+        A plain stretch to 640x640 distorts the bus and lowered its confidence
+        (0.63 vs 0.93 on a benchmark photo)."""
+        h, w = frame.shape[:2]
+        ratio = size / max(h, w)
+        nw, nh = int(round(w * ratio)), int(round(h * ratio))
+        resized = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_AREA)
+        canvas = np.full((size, size, 3), 114, dtype=np.uint8)
+        pad_x, pad_y = (size - nw) // 2, (size - nh) // 2
+        canvas[pad_y:pad_y + nh, pad_x:pad_x + nw] = resized
+        blob = cv2.dnn.blobFromImage(canvas, 1 / 255.0, (size, size), swapRB=True, crop=False)
+        return blob, ratio, (pad_x, pad_y)
+
+    def _parse_yolov8_onnx(self, preds: np.ndarray, img_w: int, img_h: int,
+                           ratio: float = None, pad_x: int = 0, pad_y: int = 0) -> Optional[Tuple[int, int, int, int]]:
+        """Parse raw YOLOv8 [1, 84, 8400] output; return the largest confident bus as (x, y, w, h)."""
         output = preds[0]  # [84, 8400]
-        # Transpose to [8400, 84]
         if output.shape[0] < output.shape[1]:
-            output = output.T
+            output = output.T  # -> [8400, 84]
+        if ratio is None:  # legacy stretched input
+            sx, sy, pad_x, pad_y = 640.0 / img_w, 640.0 / img_h, 0, 0
+        else:
+            sx = sy = ratio
 
-        boxes = []
-        confidences = []
-
-        x_scale = img_w / 640.0
-        y_scale = img_h / 640.0
-
-        for row in output:
-            classes_scores = row[4:]
-            class_id = np.argmax(classes_scores)
-            score = classes_scores[class_id]
-
-            if class_id == COCO_BUS_CLASS_ID and score >= self.conf_threshold:
-                cx, cy, w, h = row[0:4]
-                x = int((cx - w / 2) * x_scale)
-                y = int((cy - h / 2) * y_scale)
-                width = int(w * x_scale)
-                height = int(h * y_scale)
-
-                boxes.append([x, y, width, height])
-                confidences.append(float(score))
-
-        if not boxes:
+        scores = output[:, 4:]
+        bus_scores = scores[:, COCO_BUS_CLASS_ID]
+        # keep a row only if "bus" is its top class (stops a car/truck being read as a bus)
+        keep = (np.argmax(scores, axis=1) == COCO_BUS_CLASS_ID) & (bus_scores >= self.conf_threshold)
+        if not keep.any():
             return None
 
-        indices = cv2.dnn.NMSBoxes(boxes, confidences, self.conf_threshold, 0.45)
-        if len(indices) > 0:
-            best_idx = indices[0] if isinstance(indices[0], int) else indices[0][0]
-            return tuple(boxes[best_idx])
-        return None
+        boxes, confidences = [], []
+        for row, sc in zip(output[keep], bus_scores[keep]):
+            cx, cy, w, h = row[0:4]
+            x = int(((cx - w / 2) - pad_x) / sx)
+            y = int(((cy - h / 2) - pad_y) / sy)
+            boxes.append([max(0, x), max(0, y), int(w / sx), int(h / sy)])
+            confidences.append(float(sc))
+
+        # NMSBoxes returns an ndarray on OpenCV 4.x (a list of 1-element lists on
+        # older builds). The previous isinstance(indices[0], int) test is False
+        # for numpy ints, so it indexed a scalar, raised, and the exception was
+        # swallowed at debug level -- the detector silently never found a bus.
+        idx = np.array(cv2.dnn.NMSBoxes(boxes, confidences, self.conf_threshold, 0.45)).flatten()
+        if idx.size == 0:
+            return None
+        best = max(idx, key=lambda i: boxes[i][2] * boxes[i][3])  # largest = nearest bus
+        x, y, bw, bh = boxes[best]
+        bw, bh = min(bw, img_w - x), min(bh, img_h - y)
+        return (x, y, bw, bh)
