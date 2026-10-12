@@ -14,6 +14,8 @@ import platform
 import shutil
 from pathlib import Path
 
+BASE_DIR = Path(__file__).resolve().parent
+
 # --------------------------------------------------------------------------
 # GPIO PIN MAP (BCM numbering)
 # --------------------------------------------------------------------------
@@ -138,7 +140,7 @@ I2S_ALSA_DEVICE = "plughw:CARD=sndrpisimplecar,DEV=0"
 # Pre-rendered audio cache for common route numbers, so the hot path
 # skips TTS synthesis entirely for buses you see often. Populated by
 # tools/pregenerate_cache.py.
-AUDIO_CACHE_DIR = Path("sounds/cache")
+AUDIO_CACHE_DIR = BASE_DIR / "sounds" / "cache"
 COMMON_ROUTES = ["12", "21C", "45", "100", "500A"]  # seed list — edit to your city's routes
 
 PHRASE_NO_TEXT = "No route detected. Please try again."

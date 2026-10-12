@@ -1,11 +1,11 @@
-# Dockerfile for DrishtiCap / Bus Route Identifier Web Service on Render
+# Dockerfile for DrishtiCap / Bus Route Identifier Web Service
+# Compatible with Hugging Face Spaces (Port 7860, 16GB RAM) and Cloud Containers
 FROM python:3.10-slim-bookworm
 
-# Prevent Python from writing .pyc files and buffer stdout/stderr
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
-    PORT=10000 \
+    PORT=7860 \
     OCR_ENGINE=paddleocr
 
 WORKDIR /app
@@ -25,11 +25,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Set up non-root user with UID 1000 for Hugging Face Spaces compliance
+RUN useradd -m -u 1000 user
+RUN mkdir -p /app/logs /app/sounds/cache /home/user/.cache && chown -R 1000:1000 /app /home/user
+
 # Copy the rest of the application code
 COPY . .
+RUN chown -R 1000:1000 /app
 
-# Expose Render standard application port
-EXPOSE 10000
+USER 1000
 
-# Start production WSGI server with Gunicorn
-CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT:-10000} --workers 1 --threads 4 --timeout 120 web_app:app"]
+# Expose default Hugging Face Spaces port
+EXPOSE 7860
+
+# Start production WSGI server with Gunicorn (2 workers, 4 threads)
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT:-7860} --workers 2 --threads 4 --timeout 120 web_app:app"]

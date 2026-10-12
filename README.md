@@ -1,3 +1,13 @@
+---
+title: Bus Route Identifier
+emoji: 🚌
+colorFrom: red
+colorTo: yellow
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # bus-route-identifier
 
 Edge-OCR & audio-tactile bus route identifier for a Raspberry Pi Zero 2 W.
