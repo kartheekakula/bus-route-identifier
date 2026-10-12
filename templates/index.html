@@ -195,11 +195,16 @@
     /* --- UPLOAD ZONE --- */
     .upload-section {
       padding: 24px 32px;
-    }
     .upload-slot {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      box-sizing: border-box;
       border: 3px dashed #B8ADA0;
       background: #EFE8D6;
-      border-radius: 10px;
+      border-radius: 12px;
       padding: 32px 20px;
       text-align: center;
       cursor: pointer;
@@ -1107,19 +1112,52 @@
       <div class="spinner-text" id="loading-text">PROCESSING PIPELINE...</div>
     </div>
 
-    <!-- Hidden native file input placed outside the label to prevent event-loop recursion -->
-    <input type="file" id="file-input" accept="image/*" />
+    <!-- Hidden native file input placed outside the slot -->
+    <input type="file" id="file-input" accept="image/*" style="display:none;" />
 
-    <label class="upload-slot" id="drop-zone" for="file-input">
-      <span class="upload-icon">📷</span>
-      <div class="upload-heading">SELECT OR DROP BUS PHOTO</div>
-      <div class="upload-hint">Drag & drop a route board photo here, or click to open file explorer</div>
-      <div>
-        <button type="button" class="browse-pill-btn" id="browse-btn">
-          📁 Open File Explorer
-        </button>
+    <div class="upload-slot" id="drop-zone">
+      <!-- Default Prompt State (when no image selected yet) -->
+      <div id="upload-prompt-wrap" style="display:flex; flex-direction:column; align-items:center; width:100%;">
+        <span class="upload-icon">📷</span>
+        <div class="upload-heading">SELECT OR DROP BUS PHOTO</div>
+        <div class="upload-hint">Drag & drop a route board photo here, or click to open file explorer</div>
+        <div style="margin-top: 14px;">
+          <button type="button" class="browse-pill-btn" id="browse-btn">
+            📁 Open File Explorer
+          </button>
+        </div>
       </div>
-    </label>
+
+      <!-- Live Dual-View (Original + Grayscale) rendered right here inside the card -->
+      <div id="upload-preview-wrap" style="display:none; width:100%;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+          <span style="font-family:'Space Mono',monospace; font-size:12px; font-weight:700; color:var(--ink-black);" id="preview-filename-badge">
+            BUS_PHOTO.JPG
+          </span>
+          <button type="button" class="browse-pill-btn" id="btn-change-photo" style="margin-top:0; padding:6px 14px; font-size:11px;">
+            🔄 Choose Different Photo
+          </button>
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:16px; width:100%;">
+          <!-- Original Image Preview -->
+          <div style="background:#FFF; padding:10px; border-radius:8px; border:1px solid #CCC; text-align:center;">
+            <div style="font-family:'Space Mono',monospace; font-size:11px; font-weight:700; color:#555; margin-bottom:6px;">
+              ORIGINAL COLOR INGEST
+            </div>
+            <img id="preview-orig-img" style="max-height:220px; max-width:100%; object-fit:contain; border-radius:4px; display:inline-block;" />
+          </div>
+
+          <!-- Grayscale / CLAHE Preprocessed Preview -->
+          <div style="background:#FFF; padding:10px; border-radius:8px; border:1px solid #CCC; text-align:center;">
+            <div style="font-family:'Space Mono',monospace; font-size:11px; font-weight:700; color:#555; margin-bottom:6px;">
+              OPENCV GRAYSCALE & CLAHE
+            </div>
+            <img id="preview-gray-img" style="max-height:220px; max-width:100%; object-fit:contain; border-radius:4px; display:inline-block;" />
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- QUICK TEST SAMPLE CHIPS -->
     <div style="margin-top: 18px;">
@@ -1389,13 +1427,40 @@
   const runBenchmarkBtn = document.getElementById("run-benchmark-btn");
   const auditResultsBox = document.getElementById("audit-results-box");
 
+  // Pre-arm SpeechSynthesis so browser Autoplay policies don't block it later
+  function unlockAudio() {
+    try {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const silent = new SpeechSynthesisUtterance(" ");
+        silent.volume = 0.01;
+        window.speechSynthesis.speak(silent);
+      }
+    } catch(e) {}
+  }
+
   // Upload & File Explorer Handlers
   const browseBtn = document.getElementById("browse-btn");
+  const changePhotoBtn = document.getElementById("btn-change-photo");
+
+  function openFilePicker() {
+    unlockAudio();
+    fileInput.click();
+  }
+
   if (browseBtn) {
     browseBtn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      fileInput.click();
+      openFilePicker();
+    });
+  }
+
+  if (changePhotoBtn) {
+    changePhotoBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openFilePicker();
     });
   }
 
@@ -1404,15 +1469,35 @@
   });
 
   dropZone.addEventListener("click", (e) => {
-    if (e.target !== fileInput && e.target !== browseBtn && !browseBtn?.contains(e.target)) {
-      // Label natively activates file-input; stop any bubbling
-      e.stopPropagation();
+    if (e.target !== changePhotoBtn && !changePhotoBtn?.contains(e.target)) {
+      openFilePicker();
     }
   });
 
+  function showImagePreview(origSrc, filename) {
+    const origImg = document.getElementById("preview-orig-img");
+    const grayImg = document.getElementById("preview-gray-img");
+    const nameBadge = document.getElementById("preview-filename-badge");
+    const promptWrap = document.getElementById("upload-prompt-wrap");
+    const previewWrap = document.getElementById("upload-preview-wrap");
+
+    if (origImg) origImg.src = origSrc;
+    if (grayImg) grayImg.src = "";
+    if (nameBadge) nameBadge.textContent = (filename || "BUS_PHOTO.JPG").toUpperCase();
+    if (promptWrap) promptWrap.style.display = "none";
+    if (previewWrap) previewWrap.style.display = "block";
+  }
+
   fileInput.addEventListener("change", (e) => {
     if (e.target.files && e.target.files[0]) {
-      uploadFile(e.target.files[0]);
+      const file = e.target.files[0];
+      unlockAudio();
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        showImagePreview(ev.target.result, file.name);
+      };
+      reader.readAsDataURL(file);
+      uploadFile(file);
     }
   });
 
@@ -1451,7 +1536,14 @@
     e.preventDefault();
     dropZone.classList.remove("dragover");
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      uploadFile(e.dataTransfer.files[0]);
+      const file = e.dataTransfer.files[0];
+      unlockAudio();
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        showImagePreview(ev.target.result, file.name);
+      };
+      reader.readAsDataURL(file);
+      uploadFile(file);
     }
   });
 
@@ -1518,6 +1610,8 @@
   }
 
   async function runSample(filename) {
+    unlockAudio();
+    showImagePreview(`/test_images/${filename}`, filename);
     showLoading(`RUNNING PIPELINE ON ${filename.toUpperCase()}...`);
     try {
       let res = await fetch("/api/sample-identify", {
@@ -1739,6 +1833,12 @@
     document.getElementById("stg3-img").src = data.stages.preprocess.thresh_b64;
     document.getElementById("stg3-ms").textContent = `${data.stages.preprocess.time_ms} ms (TOTAL PREPROCESS)`;
 
+    // Update live grayscale/CLAHE preview right inside the upload card
+    const liveGray = document.getElementById("preview-gray-img");
+    if (liveGray && data.stages && data.stages.preprocess) {
+      liveGray.src = data.stages.preprocess.clahe_b64 || data.stages.preprocess.gray_b64;
+    }
+
     // Receipt Line Breakdown
     const receiptBox = document.getElementById("receipt-lines-container");
     receiptBox.innerHTML = `
@@ -1759,7 +1859,7 @@
     `;
   }
 
-  // Voice playback using Web Speech API
+  // Voice playback using Web Speech API with multi-voice fallback
   function speakVoice(phrase) {
     if (!phrase) return;
     try {
@@ -1768,7 +1868,11 @@
         const utter = new SpeechSynthesisUtterance(phrase);
         utter.rate = 0.95;
         utter.pitch = 1.0;
-        utter.lang = 'en-IN';
+        const voices = window.speechSynthesis.getVoices();
+        const found = voices.find(v => v.lang.startsWith("en-IN")) ||
+                      voices.find(v => v.lang.startsWith("en-US")) ||
+                      voices.find(v => v.lang.startsWith("en"));
+        if (found) utter.voice = found;
         window.speechSynthesis.speak(utter);
       }
     } catch (e) {
