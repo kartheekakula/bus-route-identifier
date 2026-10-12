@@ -50,7 +50,9 @@ sudo apt update
 sudo apt install -y python3-picamera2 tesseract-ocr espeak-ng --no-install-recommends
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+# libgl1 is needed by opencv-python (pulled in by rapidocr)
+sudo apt install -y libgl1
+pip install -r requirements.txt -r requirements-ocr.txt
 
 python3 tools/pregenerate_cache.py   # warm the audio cache for common routes
 python3 main.py                      # run in foreground first, confirm it works
@@ -72,3 +74,10 @@ cam = MockCamera("test_images/board_01.jpg")
 
 Use `tools/benchmark.py` to measure accuracy and timing against a set
 of labeled test photos before deploying to hardware.
+
+
+## Pi 4 notes (DrishtiCap Rev B)
+
+- Set the audio device in `config.py` (`I2S_ALSA_DEVICE`, or env `ALSA_DEVICE`) from `aplay -l`.
+- Camera is 1280x720; expect OCR latency of several seconds on a Pi 4 until measured with `tools/benchmark_ocr.py`.
+- ESP32 firmware uses Rev B pins (motors on GPIO 25,26,27,32,33,23; I2C at 100 kHz).

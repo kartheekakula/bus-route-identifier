@@ -11,7 +11,7 @@
  * Hardware Map:
  *   - Button: GPIO 18 (PULLUP)
  *   - I2C (TCA9548A): SDA=GPIO 21, SCL=GPIO 22
- *   - 6 Haptic Motors: GPIO 25, 26, 27, 14, 12, 13
+ *   - 6 Haptic Motors: GPIO 25, 26, 27, 32, 33, 23 (Rev B: GPIO12/14 are boot-strapping/boot-pulse pins)
  *   - USB Serial to Pi 4: 115200 baud
  */
 
@@ -23,7 +23,7 @@
 // HARDWARE INSTANCES
 // -----------------------------------------------------------------------------
 #define BUTTON_PIN 18
-const uint8_t HAPTIC_PINS[NUM_HAPTIC_MOTORS] = {25, 26, 27, 14, 12, 13};
+const uint8_t HAPTIC_PINS[NUM_HAPTIC_MOTORS] = {25, 26, 27, 32, 33, 23};
 
 ButtonManager button(BUTTON_PIN, 40, 350, 1000);
 ToFManager    tof;

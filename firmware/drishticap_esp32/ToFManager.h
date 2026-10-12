@@ -34,7 +34,7 @@ public:
 
     void begin() {
         Wire.begin();
-        Wire.setClock(400000); // 400kHz Fast I2C
+        Wire.setClock(100000); // 100kHz (Rev B: long sensor leads behind a mux)
 
         for (uint8_t ch = 0; ch < NUM_TOF_SENSORS; ch++) {
             selectChannel(ch);

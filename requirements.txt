@@ -5,6 +5,7 @@ numpy>=1.26.0,<2.0.0
 flask>=3.0.0
 gunicorn>=21.2.0
 requests>=2.31.0
+pyserial>=3.5
 
 # OCR
 pytesseract>=0.3.10

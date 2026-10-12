@@ -174,7 +174,7 @@ class BusRouteIdentifier:
         preprocess_s = time.monotonic() - t0
 
         t0 = time.monotonic()
-        result = extract_route(binary)
+        result = extract_route(binary, raw_frame=frame)
         if result.route:
             corrected = self.route_lookup.correct_route(result.route)
             if corrected != result.route:

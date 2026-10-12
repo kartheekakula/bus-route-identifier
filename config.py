@@ -35,7 +35,7 @@ BUTTON_HOLD_IGNORE_WINDOW = 1.5  # ignore re-triggers while a capture is in flig
 # Kept deliberately small: OCR accuracy on a route board plateaus well
 # below full sensor resolution, and every extra megapixel costs you
 # milliseconds in both capture and preprocessing.
-CAMERA_RESOLUTION = (640, 480)
+CAMERA_RESOLUTION = (1280, 720)  # route boards are a few % of the frame; 640x480 loses the digits
 CAMERA_FORMAT = "RGB888"
 # Region of interest as (x, y, w, h) fractions of the frame, if you know
 # the board is roughly centered (mount-dependent — tune after field testing).
@@ -135,7 +135,10 @@ PIPER_BINARY = "/usr/local/bin/piper"
 
 # ALSA device for the MAX98357A I2S DAC. Confirm the card index with
 # `aplay -l` after enabling the I2S overlay — see the hardware guide.
-I2S_ALSA_DEVICE = "plughw:CARD=sndrpisimplecar,DEV=0"
+# DrishtiCap Rev B uses the Pi 4 3.5 mm jack (finished bone-conduction headset).
+# Run `aplay -l` on the Pi; typically "plughw:CARD=Headphones,DEV=0". Use "default" if unsure.
+# For a MAX98357A I2S amp instead, use "plughw:CARD=sndrpisimplecar,DEV=0".
+I2S_ALSA_DEVICE = os.environ.get("ALSA_DEVICE", "plughw:CARD=Headphones,DEV=0")
 
 # Pre-rendered audio cache for common route numbers, so the hot path
 # skips TTS synthesis entirely for buses you see often. Populated by
