@@ -1855,6 +1855,13 @@
         `;
         tbody.appendChild(tr);
       });
+    } catch (err) {
+      hideLoading();
+      runBenchmarkBtn.disabled = false;
+      runBenchmarkBtn.textContent = "▶ RUN BATCH AUDIT";
+      alert("Benchmark execution error: " + err.message);
+    }
+  });
 
   // =========================================================================
   // DRISHTICAP 1-BUTTON GESTURES & TOF DIRECTIONAL SIMULATION
