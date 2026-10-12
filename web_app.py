@@ -103,6 +103,11 @@ def run_pipeline_instrumented(frame: np.ndarray, capture_s: float = 0.0,
     """
     t_start = time.monotonic()
     h, w = frame.shape[:2]
+    max_dim = max(h, w)
+    if max_dim > 1024:
+        scale = 1024.0 / max_dim
+        frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        h, w = frame.shape[:2]
 
     # --- STAGE 1: PREPROCESSING ---
     t0 = time.monotonic()

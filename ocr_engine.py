@@ -73,24 +73,25 @@ def _extract_with_paddleocr(frame: np.ndarray) -> OcrResult:
     try:
         h, w = frame.shape[:2]
         max_dim = max(h, w)
-        # Normalize excessively high-res camera captures (<= 1600 max dimension) for speed
-        if max_dim > 1600:
-            scale = 1600.0 / max_dim
+        # Normalize high-res camera captures (<= 960 max dimension) for memory efficiency & speed
+        if max_dim > 960:
+            scale = 960.0 / max_dim
             proc_frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
         else:
             proc_frame = frame
 
         res, _ = engine(proc_frame)
 
-        # In outdoor bus photos, scan the middle windshield band for route board placards
-        placard_res = []
-        if h > 1000 and w > 1000:
-            placard = frame[int(0.25 * h):int(0.55 * h), int(0.15 * w):int(0.85 * w)]
-            p_res, _ = engine(placard)
-            if p_res:
-                placard_res = p_res
+        all_detections = res or []
+        if not all_detections and max_dim > 600:
+            # Fallback placard crop only if full frame found no text
+            ph, pw = proc_frame.shape[:2]
+            placard = proc_frame[int(0.2 * ph):int(0.6 * ph), int(0.1 * pw):int(0.9 * pw)]
+            if placard.size > 0:
+                p_res, _ = engine(placard)
+                if p_res:
+                    all_detections = p_res
 
-        all_detections = (res or []) + placard_res
         if not all_detections:
             return OcrResult("", None, 0.0, "paddleocr", time.monotonic() - t0)
 
