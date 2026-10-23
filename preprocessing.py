@@ -20,26 +20,45 @@ low-light frames.
 """
 import time
 import logging
-
-import cv2
-import numpy as np
+from typing import Any
 
 import config
 
 logger = logging.getLogger("bus_route.preprocessing")
 
-_clahe = cv2.createCLAHE(
-    clipLimit=config.CLAHE_CLIP_LIMIT,
-    tileGridSize=config.CLAHE_TILE_GRID_SIZE,
-)
+_cv2 = None
+_clahe_obj = None
 
 
-def preprocess(frame: np.ndarray) -> np.ndarray:
+def _get_cv2_and_clahe():
+    global _cv2, _clahe_obj
+    if _cv2 is None:
+        import cv2 as _c
+        _cv2 = _c
+        _clahe_obj = _cv2.createCLAHE(
+            clipLimit=config.CLAHE_CLIP_LIMIT,
+            tileGridSize=config.CLAHE_TILE_GRID_SIZE,
+        )
+    return _cv2, _clahe_obj
+
+
+class _LazyClahe:
+    def apply(self, gray):
+        _, clahe = _get_cv2_and_clahe()
+        return clahe.apply(gray)
+
+
+_clahe = _LazyClahe()
+
+
+
+def preprocess(frame: Any) -> Any:
     """
     Run the full pipeline on a raw camera frame and return a binarized
     image ready for OCR.
     """
     t0 = time.monotonic()
+    cv2, _ = _get_cv2_and_clahe()
 
     gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY) if frame.ndim == 3 else frame
 
@@ -70,7 +89,8 @@ def preprocess(frame: np.ndarray) -> np.ndarray:
     return binary
 
 
-def _denoise(gray: np.ndarray) -> np.ndarray:
+def _denoise(gray: Any) -> Any:
     """Optional — fastNlMeansDenoising costs ~40-80ms on a Zero 2 W.
     Only enable if field testing shows OCR errors from sensor noise."""
+    cv2, _ = _get_cv2_and_clahe()
     return cv2.fastNlMeansDenoising(gray, h=10)

@@ -1,23 +1,10 @@
-# Core pipeline
-# picamera2>=0.3.20        # Installed via apt (python3-picamera2) on Raspberry Pi OS Bookworm
-opencv-python-headless==4.9.0.80
-numpy>=1.26.0,<2.0.0
+# Serverless runtime dependencies for Vercel deployment (Online OCR Mode)
 flask>=3.0.0
 requests>=2.31.0
+Pillow>=10.0.0
+python-dotenv>=1.0.1
 
-# OCR
-pytesseract>=0.3.10
-# rapidocr_onnxruntime>=1.4.0   # Optional local engine for PaddleOCR PP-OCRv4
-# tesseract-ocr binary itself is installed via apt/package manager — see guide
-
-# GPIO (Only needed on physical Raspberry Pi hardware)
-# gpiozero>=2.0.1
-
-# Optional: only needed if config.OCR_ENGINE = "easyocr"
-# easyocr>=1.7.1
-
-# Optional: only needed if config.TTS_ENGINE = "piper"
-# piper-tts>=1.6.0
-
-# Optional: only needed if config.POWER_MONITORING_ENABLED = True
-# adafruit-circuitpython-ads1x15>=2.2.0
+# Optional dependencies (only if running offline locally)
+# opencv-python-headless==4.9.0.80
+# numpy>=1.26.0,<2.0.0
+# pytesseract>=0.3.10

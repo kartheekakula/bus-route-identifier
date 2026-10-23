@@ -21,5 +21,16 @@ Thumbs.db
 *.zip
 test_images/debug_*
 
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.json.key
+*credentials*.json
+service_account*.json
+gcp-key*.json
+gcp_credentials*.json
+
 models/*.onnx
 models/*.pt
+

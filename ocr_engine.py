@@ -20,18 +20,45 @@ import re
 import time
 import logging
 from dataclasses import dataclass
-from typing import Optional
-
-import cv2
-import numpy as np
-import pytesseract
+from typing import Optional, Any
 
 import config
 
 logger = logging.getLogger("bus_route.ocr")
-pytesseract.pytesseract.tesseract_cmd = config.TESSERACT_CMD
+
+cv2 = None
+np = None
+pytesseract = None
+
+
+def _get_cv2():
+    global cv2, np
+    if cv2 is None:
+        try:
+            import cv2 as _c
+            import numpy as _n
+            cv2 = _c
+            np = _n
+        except ImportError:
+            pass
+    return cv2, np
+
+
+def _get_pytesseract():
+    global pytesseract
+    if pytesseract is None:
+        try:
+            import pytesseract as _pt
+            if getattr(config, "TESSERACT_CMD", None):
+                _pt.pytesseract.tesseract_cmd = config.TESSERACT_CMD
+            pytesseract = _pt
+        except ImportError:
+            pass
+    return pytesseract
+
 
 _ROUTE_PATTERN = re.compile(config.ROUTE_REGEX)
+
 
 
 @dataclass
@@ -119,7 +146,7 @@ def _select_best_route(detections, frame_height: int):
     return best if best else (None, 0.0)
 
 
-def _run_paddle_pass(engine, frame: np.ndarray):
+def _run_paddle_pass(engine, frame: Any):
     """One detect+recognize pass. Returns (detections, raw_text)."""
     res, _ = engine(frame)
     if not res:
@@ -129,13 +156,14 @@ def _run_paddle_pass(engine, frame: np.ndarray):
     return detections, raw_text
 
 
-def _extract_with_paddleocr(frame: np.ndarray) -> OcrResult:
+def _extract_with_paddleocr(frame: Any) -> OcrResult:
     t0 = time.monotonic()
     engine = _get_paddle_engine()
     if engine is None:
         return OcrResult("", None, 0.0, "paddleocr_unavailable", time.monotonic() - t0)
 
     try:
+        c_cv2, _ = _get_cv2()
         h, w = frame.shape[:2]
         max_dim = max(h, w)
 
@@ -199,8 +227,8 @@ def _extract_with_paddleocr(frame: np.ndarray) -> OcrResult:
         return OcrResult("", None, 0.0, "paddleocr_error", time.monotonic() - t0)
 
 
-def extract_route(binary_image: np.ndarray, raw_frame: Optional[np.ndarray] = None) -> OcrResult:
-    """Run OCR + regex parsing, returning the best route match found."""
+def extract_route_offline(binary_image: Any, raw_frame: Optional[Any] = None) -> OcrResult:
+    """Run offline OCR (PaddleOCR / Tesseract / EasyOCR), returning OcrResult."""
     frame_to_use = raw_frame if raw_frame is not None else binary_image
 
     if config.OCR_ENGINE == "paddleocr":
@@ -215,15 +243,26 @@ def extract_route(binary_image: np.ndarray, raw_frame: Optional[np.ndarray] = No
     return _extract_with_tesseract(binary_image, raw_frame=raw_frame)
 
 
-def _tesseract_pass(binary_image: np.ndarray, psm: int):
+def extract_route(binary_image: Any, raw_frame: Optional[Any] = None) -> OcrResult:
+    """Run OCR + regex parsing, routing via ocr_router (honoring config.OCR_MODE)."""
+    import ocr_router
+    frame_to_use = raw_frame if raw_frame is not None else binary_image
+    router_res = ocr_router.route_ocr(frame_to_use, binary_image=binary_image)
+    return router_res["ocr_result"]
+
+
+def _tesseract_pass(binary_image: Any, psm: int):
+    pt = _get_pytesseract()
+    if pt is None:
+        return "", 0.0
     tess_config = (
         f"--psm {psm} -c tessedit_char_whitelist={config.TESSERACT_WHITELIST}"
     )
-    data = pytesseract.image_to_data(
+    data = pt.image_to_data(
         binary_image,
         lang=config.TESSERACT_LANG,
         config=tess_config,
-        output_type=pytesseract.Output.DICT,
+        output_type=pt.Output.DICT,
     )
     words, confidences = [], []
     for text, conf in zip(data["text"], data["conf"]):
@@ -236,31 +275,33 @@ def _tesseract_pass(binary_image: np.ndarray, psm: int):
     return raw_text, mean_conf
 
 
-def _extract_with_winocr(binary_image: np.ndarray, raw_frame: Optional[np.ndarray] = None) -> OcrResult:
+def _extract_with_winocr(binary_image: Any, raw_frame: Optional[Any] = None) -> OcrResult:
     t0 = time.monotonic()
     try:
         import winocr
+        cv2_lib, np_lib = _get_cv2()
         texts = []
 
         # Pass 1: Raw image (best for natural text, signs, color boards)
-        if raw_frame is not None and raw_frame.size > 0:
+        if raw_frame is not None and getattr(raw_frame, "size", 0) > 0:
             res_raw = winocr.recognize_cv2_sync(raw_frame)
             if res_raw and res_raw.get("text"):
                 texts.append(res_raw["text"].strip())
 
             # Pass 1b: 2x scaled for small fonts / window signs
             h_f, w_f = raw_frame.shape[:2]
-            if max(h_f, w_f) < 1200:
+            if max(h_f, w_f) < 1200 and cv2_lib is not None:
                 scale = min(2.0, 1600.0 / max(h_f, w_f))
-                frame_scaled = cv2.resize(raw_frame, (0, 0), fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+                frame_scaled = cv2_lib.resize(raw_frame, (0, 0), fx=scale, fy=scale, interpolation=cv2_lib.INTER_CUBIC)
                 res_scaled = winocr.recognize_cv2_sync(frame_scaled)
                 if res_scaled and res_scaled.get("text"):
                     texts.append(res_scaled["text"].strip())
 
         # Pass 2: Binary threshold image (best for high-contrast white-on-black or black-on-white plates)
-        if binary_image is not None and binary_image.size > 0:
-            img_bgr = cv2.cvtColor(binary_image, cv2.COLOR_GRAY2BGR) if binary_image.ndim == 2 else binary_image.copy()
-            res_bin = winocr.recognize_cv2_sync(np.ascontiguousarray(img_bgr))
+        if binary_image is not None and getattr(binary_image, "size", 0) > 0 and cv2_lib is not None:
+            img_bgr = cv2_lib.cvtColor(binary_image, cv2_lib.COLOR_GRAY2BGR) if binary_image.ndim == 2 else binary_image.copy()
+            as_arr = np_lib.ascontiguousarray(img_bgr) if np_lib is not None else img_bgr
+            res_bin = winocr.recognize_cv2_sync(as_arr)
             if res_bin and res_bin.get("text"):
                 texts.append(res_bin["text"].strip())
 
@@ -294,7 +335,7 @@ def _extract_with_winocr(binary_image: np.ndarray, raw_frame: Optional[np.ndarra
 
 
 
-def _extract_with_tesseract(binary_image: np.ndarray, raw_frame: Optional[np.ndarray] = None) -> OcrResult:
+def _extract_with_tesseract(binary_image: Any, raw_frame: Optional[Any] = None) -> OcrResult:
     t0 = time.monotonic()
     try:
         raw_text, mean_conf = _tesseract_pass(binary_image, config.TESSERACT_PSM_PRIMARY)
@@ -305,34 +346,28 @@ def _extract_with_tesseract(binary_image: np.ndarray, raw_frame: Optional[np.nda
         elapsed = time.monotonic() - t0
 
         return OcrResult(raw_text, route, mean_conf, "tesseract", elapsed)
-    except pytesseract.pytesseract.TesseractNotFoundError as e:
-        # This is the one case where "fall back to Windows OCR" is actually the
-        # right call — the binary genuinely isn't at the resolved path.
-        logger.warning(
-            "Tesseract binary not found at '%s' (%s). Falling back to Windows OCR "
-            "with degraded (estimated, non-numeric) confidence. Fix: install "
-            "Tesseract-OCR and/or add it to PATH — see check_tesseract.py.",
-            config.TESSERACT_CMD, e,
-        )
-        return _extract_with_winocr(binary_image, raw_frame=raw_frame)
     except Exception as e:
-        # Any other failure (bad image array, missing eng.traineddata, a
-        # permissions error, etc.) is a real bug, not a "Tesseract isn't
-        # installed" situation — log it loudly and with a traceback instead of
-        # silently reporting it as the same thing. Still fall back so one bad
-        # frame doesn't crash the request, but this must be visible in logs.
-        logger.error(
-            "Tesseract OCR pass raised an unexpected error (NOT a 'not found' "
-            "issue — investigate this): %s: %s",
-            type(e).__name__, e, exc_info=True,
-        )
+        if type(e).__name__ == "TesseractNotFoundError":
+            logger.warning(
+                "Tesseract binary not found at '%s' (%s). Falling back to Windows OCR "
+                "with degraded (estimated, non-numeric) confidence. Fix: install "
+                "Tesseract-OCR and/or add it to PATH — see check_tesseract.py.",
+                config.TESSERACT_CMD, e,
+            )
+        else:
+            logger.error(
+                "Tesseract OCR pass raised an unexpected error (NOT a 'not found' "
+                "issue — investigate this): %s: %s",
+                type(e).__name__, e, exc_info=True,
+            )
         return _extract_with_winocr(binary_image, raw_frame=raw_frame)
+
 
 
 _easyocr_reader = None  # lazy-loaded singleton, only if OCR_ENGINE == "easyocr"
 
 
-def _extract_with_easyocr(binary_image: np.ndarray) -> OcrResult:
+def _extract_with_easyocr(binary_image: Any) -> OcrResult:
     global _easyocr_reader
     t0 = time.monotonic()
     if _easyocr_reader is None:

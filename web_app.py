@@ -18,13 +18,23 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-import cv2
-import numpy as np
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
 from flask import Flask, request, jsonify, render_template
 from werkzeug.exceptions import HTTPException
 
 import config
 import ocr_engine
+import ocr_router
+import ocr_online
 import preprocessing
 from routes import RouteLookup
 
@@ -46,48 +56,49 @@ route_lookup = RouteLookup(routes_dir=config.ROUTES_DATA_DIR, city=config.CITY)
 route_lookup.startup_complete = True
 _last_spoken_phrase: Optional[str] = None
 
-# --- STARTUP OCR ENGINE CHECK ---
-# Print this loudly and unconditionally: if the server is silently running on
-# the Windows OCR fallback instead of Tesseract, that must be obvious the
-# moment you start it, not something discovered by squinting at a UI badge
-# after a failed demo upload.
-try:
-    import pytesseract as _pt
-    _tess_version = _pt.get_tesseract_version()
-    logger.info("OCR ENGINE READY: Tesseract %s at '%s'", _tess_version, config.TESSERACT_CMD)
-except Exception as e:
-    logger.warning(
-        "=" * 70 + "\n"
-        "OCR ENGINE: Tesseract is NOT available (%s: %s).\n"
-        "The app will run on the Windows OCR fallback instead, which has no\n"
-        "native confidence score and is generally less accurate.\n"
-        "Resolved TESSERACT_CMD was: '%s'\n"
-        "Run `python check_tesseract.py` for a focused diagnosis, or install\n"
-        "Tesseract-OCR and ensure it's on PATH.\n" + "=" * 70,
-        type(e).__name__, e, config.TESSERACT_CMD,
-    )
+# --- STARTUP OCR ENGINE CHECKS ---
+_has_vision_creds = bool(
+    getattr(config, "GOOGLE_VISION_API_KEY", "")
+    or getattr(config, "GOOGLE_APPLICATION_CREDENTIALS", "")
+    or os.environ.get("GEMINI_API_KEY", "")
+)
 
-# The check above only covers the *fallback* engine. Tesseract being healthy
-# says nothing about whether the engine we actually intend to use loaded, and a
-# silent downgrade here looks identical to "the OCR is just bad": every upload
-# comes back low-confidence and the device announces "unclear".
-if config.OCR_ENGINE == "paddleocr":
-    try:
-        import rapidocr_onnxruntime  # noqa: F401
-        logger.info("OCR ENGINE READY: rapidocr_onnxruntime (PP-OCRv4 detection + recognition)")
-    except ImportError:
-        logger.warning(
+if _has_vision_creds:
+    logger.info("HYBRID OCR READY: Google Vision credentials configured (OCR_MODE='%s').", config.OCR_MODE)
+else:
+    if config.OCR_MODE == "online":
+        logger.error(
             "\n" + "=" * 70 + "\n"
-            "OCR ENGINE DEGRADED: config.OCR_ENGINE is 'paddleocr' but\n"
-            "rapidocr_onnxruntime is not installed in this interpreter:\n"
-            "  %s\n"
-            "Falling back to Tesseract, which cannot locate text in a scene\n"
-            "photo -- it reads 1 of the 8 benchmark images instead of 7, so\n"
-            "almost every upload will come back 'unclear'. Install it with:\n"
-            "  pip install -r requirements-ocr.txt\n" + "=" * 70,
-            sys.executable,
+            "CONFIGURATION WARNING: OCR_MODE is set to 'online' but GOOGLE_VISION_API_KEY\n"
+            "is not found in environment or .env!\n"
+            "Fix: Add GOOGLE_VISION_API_KEY to your .env file or Vercel Environment Variables.\n"
+            + "=" * 70
+        )
+    else:
+        logger.info("HYBRID OCR: Mode='%s'. Offline primary engine ready.", config.OCR_MODE)
+
+# Check offline engines (only if offline/auto mode and running with full dependencies)
+if config.OCR_MODE != "online":
+    try:
+        import pytesseract as _pt
+        _tess_version = _pt.get_tesseract_version()
+        logger.info("OFFLINE ENGINE READY: Tesseract %s at '%s'", _tess_version, config.TESSERACT_CMD)
+    except Exception as e:
+        logger.warning(
+            "=" * 70 + "\n"
+            "OFFLINE ENGINE: Tesseract is NOT available (%s: %s).\n"
+            "The app will run on the Windows OCR fallback instead.\n" + "=" * 70,
+            type(e).__name__, e
         )
 
+    if config.OCR_ENGINE == "paddleocr":
+        try:
+            import rapidocr_onnxruntime  # noqa: F401
+            logger.info("OFFLINE ENGINE READY: rapidocr_onnxruntime (PP-OCRv4)")
+        except ImportError:
+            logger.warning(
+                "OFFLINE ENGINE: rapidocr_onnxruntime is not installed. Falling back to Tesseract."
+            )
 
 # Ensure timing log exists (gracefully handle read-only filesystems on serverless)
 try:
@@ -101,22 +112,28 @@ except Exception as e:
     logger.warning("Could not initialize timing log at %s (read-only filesystem): %s", config.LOG_PATH, e)
 
 
-
-def _encode_jpeg_base64(img: np.ndarray, max_dim: int = 640, quality: int = 80) -> str:
-    """Encode an OpenCV image (color or grayscale) into a Base64 JPEG data URL."""
-    if img is None or img.size == 0:
+def _encode_jpeg_base64(img: Any, max_dim: int = 640, quality: int = 80) -> str:
+    """Encode an image (OpenCV numpy array or raw bytes) into a Base64 JPEG data URL."""
+    if img is None:
         return ""
-    h, w = img.shape[:2]
-    if max(h, w) > max_dim:
-        scale = max_dim / max(h, w)
-        img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-    success, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
-    if not success:
+    if isinstance(img, (bytes, bytearray)):
+        return "data:image/jpeg;base64," + base64.b64encode(img).decode("utf-8")
+    if hasattr(img, "size") and img.size == 0:
         return ""
-    return "data:image/jpeg;base64," + base64.b64encode(buf).decode("utf-8")
+    if cv2 is not None and hasattr(img, "shape"):
+        h, w = img.shape[:2]
+        if max(h, w) > max_dim:
+            scale = max_dim / max(h, w)
+            img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        success, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        if not success:
+            return ""
+        return "data:image/jpeg;base64," + base64.b64encode(buf).decode("utf-8")
+    return ""
 
 
-def run_pipeline_instrumented(frame: np.ndarray, capture_s: float = 0.0,
+
+def run_pipeline_instrumented(frame: Any, capture_s: float = 0.0,
                               client_ocr_text: Optional[str] = None,
                               client_ocr_conf: float = 0.0,
                               client_ocr_ms: float = 0.0) -> Dict[str, Any]:
@@ -126,40 +143,65 @@ def run_pipeline_instrumented(frame: np.ndarray, capture_s: float = 0.0,
     real intermediate image frames.
     """
     t_start = time.monotonic()
-    h, w = frame.shape[:2]
+    h, w = 720, 1280
+    if hasattr(frame, "shape") and len(frame.shape) >= 2:
+        h, w = frame.shape[:2]
+    elif isinstance(frame, (bytes, bytearray)):
+        try:
+            from PIL import Image
+            pil_img = Image.open(io.BytesIO(frame))
+            w, h = pil_img.size
+        except Exception:
+            pass
 
     # --- STAGE 1: PREPROCESSING ---
     t0 = time.monotonic()
-    # Grayscale
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame.copy()
-    if config.UPSCALE_FACTOR != 1.0:
-        gray = cv2.resize(
-            gray, None,
-            fx=config.UPSCALE_FACTOR, fy=config.UPSCALE_FACTOR,
-            interpolation=cv2.INTER_LINEAR,
-        )
-    # CLAHE equalization
-    clahe_img = preprocessing._clahe.apply(gray)
-    # Adaptive threshold
-    binary = cv2.adaptiveThreshold(
-        clahe_img,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        config.ADAPTIVE_THRESH_BLOCK_SIZE,
-        config.ADAPTIVE_THRESH_C,
-    )
-    preprocess_s = time.monotonic() - t0
+    gray = None
+    clahe_img = None
+    binary = None
+    preprocess_s = 0.0
 
-    # --- STAGE 2: OCR EXTRACTION ---
-    # ocr_engine.extract_route internally measures its own elapsed_s
+    if cv2 is not None and hasattr(frame, "shape") and config.OCR_MODE != "online":
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame.copy()
+        if config.UPSCALE_FACTOR != 1.0:
+            gray = cv2.resize(
+                gray, None,
+                fx=config.UPSCALE_FACTOR, fy=config.UPSCALE_FACTOR,
+                interpolation=cv2.INTER_LINEAR,
+            )
+        clahe_img = preprocessing._clahe.apply(gray)
+        binary = cv2.adaptiveThreshold(
+            clahe_img,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            config.ADAPTIVE_THRESH_BLOCK_SIZE,
+            config.ADAPTIVE_THRESH_C,
+        )
+        preprocess_s = time.monotonic() - t0
+    else:
+        preprocess_s = 0.0
+
+    # --- STAGE 2: OCR EXTRACTION VIA HYBRID ROUTER ---
     t0 = time.monotonic()
     try:
-        ocr_result = ocr_engine.extract_route(binary, raw_frame=frame)
+        router_data = ocr_router.route_ocr(frame, binary_image=binary)
+        ocr_result = router_data["ocr_result"]
+        engine_label = router_data["engine"]
+        ocr_s = router_data["latency_ms"] / 1000.0
     except Exception as e:
         logger.warning("OCR extraction exception: %s", e)
         ocr_result = ocr_engine.OcrResult("", None, 0.0, "ocr_error", time.monotonic() - t0)
-    ocr_s = ocr_result.elapsed_s
+        engine_label = "offline"
+        ocr_s = ocr_result.elapsed_s
+        router_data = {
+            "route": None,
+            "engine": "offline",
+            "latency_ms": round(ocr_s * 1000, 2),
+            "confidence": 0.0,
+            "raw_text": "",
+            "confidence_is_estimated": False,
+        }
 
     # Fallback to client-side OCR if server OCR found nothing and client provided text
     if not ocr_result.raw_text and client_ocr_text:
@@ -175,7 +217,9 @@ def run_pipeline_instrumented(frame: np.ndarray, capture_s: float = 0.0,
             elapsed_s=elapsed_to_use,
             confidence_is_estimated=False,
         )
+        engine_label = "offline"
         ocr_s = ocr_result.elapsed_s
+        router_data["latency_ms"] = round(ocr_s * 1000, 2)
 
     # --- STAGE 3: LOOKUP & FUZZY CORRECTION ---
     t0 = time.monotonic()
@@ -278,11 +322,13 @@ def run_pipeline_instrumented(frame: np.ndarray, capture_s: float = 0.0,
                 "thresh_b64": thresh_b64,
             },
             "ocr": {
-                "name": f"OCR Engine ({ocr_result.engine})",
-                "time_ms": round(ocr_s * 1000, 2),
+                "name": f"OCR Engine ({engine_label})",
+                "time_ms": round(router_data["latency_ms"], 2),
                 "budget_ms": round(config.BUDGET_OCR * 1000, 1),
                 "pass": ocr_s <= config.BUDGET_OCR,
-                "engine": ocr_result.engine,
+                "engine": engine_label,
+                "router_engine": engine_label,
+                "sub_engine": ocr_result.engine,
                 "raw_text": ocr_result.raw_text,
                 "confidence": round(ocr_result.confidence, 1),
                 "confidence_is_estimated": ocr_result.confidence_is_estimated,
@@ -314,6 +360,8 @@ def run_pipeline_instrumented(frame: np.ndarray, capture_s: float = 0.0,
             "pass": total_s <= config.BUDGET_TOTAL,
         },
         "route": corrected_route,
+        "engine": engine_label,
+        "engine_latency_ms": router_data["latency_ms"],
         "raw_route": raw_route,
         "destination": destination,
         "spoken_phrase": phrase,
@@ -327,7 +375,13 @@ def run_pipeline_instrumented(frame: np.ndarray, capture_s: float = 0.0,
 @app.route("/api")
 @app.route("/api/")
 def index():
-    return render_template("index.html")
+    vision_key_error = None
+    if config.OCR_MODE == "online" and not _has_vision_creds:
+        vision_key_error = (
+            "Configuration Error: GOOGLE_VISION_API_KEY is not configured. "
+            "Set GOOGLE_VISION_API_KEY in your .env or Vercel Environment Variables."
+        )
+    return render_template("index.html", vision_key_error=vision_key_error)
 
 
 
@@ -336,8 +390,12 @@ def get_config():
     """Returns active configuration constants directly from config.py."""
     return jsonify({
         "city": config.CITY,
+        "ocr_mode": config.OCR_MODE,
         "ocr_engine": config.OCR_ENGINE,
+        "online_timeout_s": config.ONLINE_TIMEOUT_S,
+        "vision_key_configured": _has_vision_creds,
         "ocr_min_confidence": config.OCR_MIN_CONFIDENCE,
+        "offline_min_confidence": config.OFFLINE_MIN_CONFIDENCE,
         "route_regex": config.ROUTE_REGEX,
         "budget_total_ms": config.BUDGET_TOTAL * 1000,
         "budget_capture_ms": config.BUDGET_CAPTURE * 1000,
@@ -376,14 +434,24 @@ def identify_upload():
     if not file.filename:
         return jsonify({"error": "Empty filename"}), 400
 
+    if config.OCR_MODE == "online" and not _has_vision_creds:
+        return jsonify({
+            "error": "Configuration Error: GOOGLE_VISION_API_KEY is not configured. Set GOOGLE_VISION_API_KEY in your .env or Vercel Environment Variables.",
+            "status": "missing_api_key"
+        }), 400
+
     t0 = time.monotonic()
     file_bytes = file.read()
-    nparr = np.frombuffer(file_bytes, np.uint8)
-    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    capture_s = time.monotonic() - t0
-
+    frame = None
+    if cv2 is not None and np is not None:
+        try:
+            nparr = np.frombuffer(file_bytes, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        except Exception as e:
+            logger.warning("cv2.imdecode failed: %s", e)
     if frame is None:
-        return jsonify({"error": "Could not decode uploaded file as a valid image"}), 400
+        frame = file_bytes
+    capture_s = time.monotonic() - t0
 
     client_ocr_text = request.form.get("client_ocr_text", "").strip() or None
     client_ocr_conf = float(request.form.get("client_ocr_conf", 0.0) or 0.0)
@@ -418,8 +486,25 @@ def identify_sample():
     if not safe_path.exists() or not safe_path.is_file():
         return jsonify({"error": f"Sample file '{filename}' not found"}), 404
 
+    if config.OCR_MODE == "online" and not _has_vision_creds:
+        return jsonify({
+            "error": "Configuration Error: GOOGLE_VISION_API_KEY is not configured. Set GOOGLE_VISION_API_KEY in your .env or Vercel Environment Variables.",
+            "status": "missing_api_key"
+        }), 400
+
     t0 = time.monotonic()
-    frame = cv2.imread(str(safe_path))
+    frame = None
+    if cv2 is not None:
+        try:
+            frame = cv2.imread(str(safe_path))
+        except Exception as e:
+            logger.warning("cv2.imread failed: %s", e)
+    if frame is None:
+        try:
+            with open(safe_path, "rb") as fh:
+                frame = fh.read()
+        except Exception as e:
+            return jsonify({"error": f"Could not read image file '{filename}': {e}"}), 400
     capture_s = time.monotonic() - t0
 
     if frame is None:

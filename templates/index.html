@@ -996,6 +996,16 @@
     </div>
   </header>
 
+  <!-- STARTUP WARNING BANNER FOR MISSING VISION API KEY -->
+  {% if vision_key_error %}
+  <div id="vision-key-alert" class="vision-alert-banner" style="background:#fef2f2; border:1px solid #f87171; color:#991b1b; padding:12px 16px; border-radius:6px; margin:16px 0; font-size:12px; font-family:'Space Mono',monospace; line-height:1.4;">
+    <strong>⚠️ Online OCR Notice:</strong> {{ vision_key_error }}
+  </div>
+  {% else %}
+  <div id="vision-key-alert" class="vision-alert-banner" style="display:none; background:#fef2f2; border:1px solid #f87171; color:#991b1b; padding:12px 16px; border-radius:6px; margin:16px 0; font-size:12px; font-family:'Space Mono',monospace; line-height:1.4;">
+  </div>
+  {% endif %}
+
   <!-- DRISHTICAP 1-BUTTON & TOF RADAR HARDWARE HUB -->
   <section class="ticket-stub drishticap-section" id="drishticap-hardware-card">
     <div class="drishti-header">
@@ -1197,6 +1207,7 @@
         <div class="led-route-row">
           <span class="led-label">IDENTIFIED ROUTE NUMBER</span>
           <span class="led-digits" id="led-route-number">305</span>
+          <div class="led-engine-muted" id="led-engine-info" style="font-size:11px; color:#9ca3af; font-family:'Space Mono',monospace; margin-top:4px; letter-spacing:0.5px;">Engine: offline (140ms)</div>
         </div>
         <div class="led-destination-row">
           <span class="led-dest-arrow">➔</span>
@@ -1639,6 +1650,15 @@
       routeDigitsEl.style.lineHeight = "1.2";
     }
 
+    // Always update engine info underneath route: "Engine: offline" or "Engine: online" and latency in ms
+    const engineInfoEl = document.getElementById("led-engine-info");
+    if (engineInfoEl) {
+      const engineName = data.engine || (data.stages && data.stages.ocr && data.stages.ocr.router_engine) || (data.stages && data.stages.ocr && data.stages.ocr.engine) || "offline";
+      const normEngine = (engineName.toLowerCase().indexOf("online") !== -1 || engineName.toLowerCase().indexOf("vision") !== -1) ? "online" : "offline";
+      const ocrMs = Math.round(data.engine_latency_ms || (data.stages && data.stages.ocr && data.stages.ocr.time_ms) || (data.total && data.total.time_ms) || 0);
+      engineInfoEl.textContent = `Engine: ${normEngine} (${ocrMs}ms)`;
+    }
+
     if (data.status === "success") {
       advisoryCard.style.display = "none";
       routeDigitsEl.textContent = displayRoute || "---";
@@ -1975,6 +1995,20 @@
       alert("Direction scan error: " + err.message);
     }
   };
+
+  // Check OCR mode and API key status on startup
+  fetch("/api/config")
+    .then(r => r.json())
+    .then(cfg => {
+      if (cfg.ocr_mode === "online" && !cfg.vision_key_configured) {
+        const alertEl = document.getElementById("vision-key-alert");
+        if (alertEl) {
+          alertEl.style.display = "block";
+          alertEl.innerHTML = "<strong>⚠️ Online OCR Notice:</strong> GOOGLE_VISION_API_KEY environment variable is not configured. Please set GOOGLE_VISION_API_KEY in your .env (local) or Vercel Project Settings > Environment Variables.";
+        }
+      }
+    })
+    .catch(e => console.debug("config fetch err:", e));
 
 </script>
 

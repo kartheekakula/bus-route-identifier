@@ -16,6 +16,14 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
+# Load local .env if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / ".env")
+except ImportError:
+    pass
+
+
 # --------------------------------------------------------------------------
 # GPIO PIN MAP (BCM numbering)
 # --------------------------------------------------------------------------
@@ -113,6 +121,22 @@ TESSERACT_PSM_PRIMARY = 7
 TESSERACT_PSM_FALLBACK = 11
 TESSERACT_WHITELIST = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/- "
 OCR_MIN_CONFIDENCE = 45  # 0-100, Tesseract mean word confidence; below this -> "unclear" feedback
+OFFLINE_MIN_CONFIDENCE = OCR_MIN_CONFIDENCE  # Confidence threshold below which 'auto' falls back to online
+
+# --------------------------------------------------------------------------
+# HYBRID OCR PIPELINE (OFFLINE PRIMARY + GOOGLE CLOUD VISION FALLBACK)
+# --------------------------------------------------------------------------
+# "auto"    : Run offline engine first; if no route or conf < OFFLINE_MIN_CONFIDENCE, fall back to online
+# "offline" : Offline engine only (RapidOCR/Tesseract) - zero network calls
+# "online"  : Google Cloud Vision API only
+_default_ocr_mode = "online" if os.environ.get("VERCEL") else "auto"
+OCR_MODE = os.environ.get("OCR_MODE", _default_ocr_mode).lower().strip()
+ONLINE_TIMEOUT_S = float(os.environ.get("ONLINE_TIMEOUT_S", 3.0))
+
+# Google Cloud Vision Credentials (env var only, never hardcoded)
+GOOGLE_VISION_API_KEY = os.environ.get("GOOGLE_VISION_API_KEY", "").strip()
+GOOGLE_APPLICATION_CREDENTIALS = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+
 
 # Route-number pattern: 1-3 digits optionally followed by a single letter
 # suffix (e.g. "12", "21C", "500A"), optionally with a "/" branch suffix

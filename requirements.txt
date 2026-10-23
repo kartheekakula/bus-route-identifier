@@ -6,10 +6,13 @@ flask>=3.0.0
 gunicorn>=21.2.0
 requests>=2.31.0
 pyserial>=3.5
+python-dotenv>=1.0.1
+Pillow>=10.0.0
 
 # OCR
 pytesseract>=0.3.10
 rapidocr_onnxruntime>=1.4.0   # Fast, high-accuracy PP-OCRv4 ONNX Runtime engine
+# google-cloud-vision>=3.4.0   # Optional: Google Cloud Vision client library
 # tesseract-ocr binary itself is installed via apt/package manager — see guide
 
 # GPIO (Only needed on physical Raspberry Pi hardware)

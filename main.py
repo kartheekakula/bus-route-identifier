@@ -211,7 +211,7 @@ class BusRouteIdentifier:
         if total_s > config.BUDGET_TOTAL:
             logger.warning("TOTAL run took %.3fs — over the %.3fs budget!", total_s, config.BUDGET_TOTAL)
         else:
-            logger.info("Run complete in %.3fs (route=%s, conf=%.1f)", total_s, result.route, result.confidence)
+            logger.info("Run complete in %.3fs (route=%s, conf=%.1f, engine=%s)", total_s, result.route, result.confidence, result.engine)
 
     def _log_run(self, capture_s, preprocess_s, ocr_s, feedback_s, total_s, result):
         with open(config.LOG_PATH, "a", newline="") as f:
