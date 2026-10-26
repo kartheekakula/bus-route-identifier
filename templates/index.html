@@ -498,6 +498,16 @@
       background: #333;
       transform: translateY(-1px);
     }
+    .speak-btn.playing {
+      background: var(--mustard-amber);
+      color: var(--ink-black);
+      box-shadow: 0 0 14px rgba(232, 93, 44, 0.45);
+      animation: pulse-speak 1s infinite alternate;
+    }
+    @keyframes pulse-speak {
+      0% { transform: scale(1); }
+      100% { transform: scale(1.03); }
+    }
 
     /* KPI Cards Row */
     .kpi-row {
@@ -1151,7 +1161,7 @@
             <div style="font-family:'Space Mono',monospace; font-size:11px; font-weight:700; color:#555; margin-bottom:6px;">
               ORIGINAL COLOR INGEST
             </div>
-            <img id="preview-orig-img" style="max-height:220px; max-width:100%; object-fit:contain; border-radius:4px; display:inline-block;" />
+            <img id="preview-orig-img" alt="Original Color Ingest" style="max-height:220px; max-width:100%; object-fit:contain; border-radius:4px; display:inline-block;" />
           </div>
 
           <!-- Grayscale / CLAHE Preprocessed Preview -->
@@ -1159,7 +1169,7 @@
             <div style="font-family:'Space Mono',monospace; font-size:11px; font-weight:700; color:#555; margin-bottom:6px;">
               OPENCV GRAYSCALE & CLAHE
             </div>
-            <img id="preview-gray-img" style="max-height:220px; max-width:100%; object-fit:contain; border-radius:4px; display:inline-block;" />
+            <img id="preview-gray-img" alt="OpenCV Grayscale & CLAHE" style="max-height:220px; max-width:100%; object-fit:contain; border-radius:4px; display:inline-block;" />
           </div>
         </div>
       </div>
@@ -1434,16 +1444,89 @@
   const runBenchmarkBtn = document.getElementById("run-benchmark-btn");
   const auditResultsBox = document.getElementById("audit-results-box");
 
-  // Pre-arm SpeechSynthesis so browser Autoplay policies don't block it later
+  // Safely prime SpeechSynthesis & AudioContext on user interaction
   function unlockAudio() {
     try {
       if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-        const silent = new SpeechSynthesisUtterance(" ");
-        silent.volume = 0.01;
-        window.speechSynthesis.speak(silent);
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
       }
-    } catch(e) {}
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx && !window._audioContext) {
+        window._audioContext = new AudioCtx();
+      }
+      if (window._audioContext && window._audioContext.state === 'suspended') {
+        window._audioContext.resume();
+      }
+    } catch(e) {
+      console.debug("Audio unlock note:", e);
+    }
+  }
+
+  // Instant client-side Grayscale & Adaptive Histogram Equalization (CLAHE-like) computation
+  function renderClientGrayscale(imgSrc) {
+    const grayImg = document.getElementById("preview-gray-img");
+    if (!grayImg) return;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        const maxDim = 640;
+        let w = img.naturalWidth || img.width || 320;
+        let h = img.naturalHeight || img.height || 240;
+        if (Math.max(w, h) > maxDim) {
+          const scale = maxDim / Math.max(w, h);
+          w = Math.round(w * scale);
+          h = Math.round(h * scale);
+        }
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        const imgData = ctx.getImageData(0, 0, w, h);
+        const d = imgData.data;
+
+        // Grayscale conversion (Rec. 601 luma) + Cumulative Histogram Equalization
+        const lum = new Uint8Array(w * h);
+        const hist = new Uint32Array(256);
+        for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+          const l = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+          lum[j] = l;
+          hist[l]++;
+        }
+
+        const cdf = new Uint32Array(256);
+        cdf[0] = hist[0];
+        for (let k = 1; k < 256; k++) {
+          cdf[k] = cdf[k - 1] + hist[k];
+        }
+        let cdfMin = 0;
+        for (let k = 0; k < 256; k++) {
+          if (cdf[k] > 0) { cdfMin = cdf[k]; break; }
+        }
+        const total = lum.length;
+        const denom = (total - cdfMin) || 1;
+        const lut = new Uint8Array(256);
+        for (let k = 0; k < 256; k++) {
+          lut[k] = Math.round(((cdf[k] - cdfMin) / denom) * 255);
+        }
+
+        for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+          const val = lut[lum[j]];
+          d[i] = val;
+          d[i + 1] = val;
+          d[i + 2] = val;
+        }
+        ctx.putImageData(imgData, 0, 0);
+        grayImg.src = canvas.toDataURL("image/jpeg", 0.85);
+        grayImg.alt = "OpenCV Grayscale & CLAHE Preview";
+      } catch (err) {
+        console.warn("Client grayscale preview rendering error:", err);
+      }
+    };
+    img.src = imgSrc;
   }
 
   // Upload & File Explorer Handlers
@@ -1472,16 +1555,12 @@
 
   function showImagePreview(origSrc, filename) {
     const origImg = document.getElementById("preview-orig-img");
-    const grayImg = document.getElementById("preview-gray-img");
     const nameBadge = document.getElementById("preview-filename-badge");
     const promptWrap = document.getElementById("upload-prompt-wrap");
     const previewWrap = document.getElementById("upload-preview-wrap");
 
     if (origImg) origImg.src = origSrc;
-    if (grayImg) {
-      grayImg.src = "";
-      grayImg.alt = "Computing OpenCV Grayscale & CLAHE...";
-    }
+    renderClientGrayscale(origSrc);
     if (nameBadge) nameBadge.textContent = (filename || "BUS_PHOTO.JPG").toUpperCase();
     if (promptWrap) promptWrap.style.display = "none";
     if (previewWrap) previewWrap.style.display = "block";
@@ -1782,7 +1861,11 @@
     // Update live grayscale/CLAHE preview right inside the upload card
     const liveGray = document.getElementById("preview-gray-img");
     if (liveGray && data.stages && data.stages.preprocess) {
-      liveGray.src = data.stages.preprocess.clahe_b64 || data.stages.preprocess.gray_b64;
+      const serverPreprocessed = data.stages.preprocess.clahe_b64 || data.stages.preprocess.gray_b64;
+      if (serverPreprocessed) {
+        liveGray.src = serverPreprocessed;
+        liveGray.alt = "OpenCV CLAHE Equalized Image";
+      }
     }
 
     // Receipt Line Breakdown
@@ -1805,32 +1888,159 @@
     `;
   }
 
-  // Voice playback using Web Speech API with multi-voice fallback
-  function speakVoice(phrase) {
-    if (!phrase) return;
+  // Transit alert chime using Web Audio API
+  function playTransitChime() {
     try {
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.resume();
-        const utter = new SpeechSynthesisUtterance(phrase);
-        utter.rate = 0.95;
-        utter.pitch = 1.0;
-        const voices = window.speechSynthesis.getVoices();
-        if (voices && voices.length > 0) {
-          const found = voices.find(v => v.lang && (v.lang.startsWith("en-IN") || v.lang.startsWith("en_IN"))) ||
-                        voices.find(v => v.lang && (v.lang.startsWith("en-US") || v.lang.startsWith("en_US"))) ||
-                        voices.find(v => v.lang && v.lang.startsWith("en"));
-          if (found) utter.voice = found;
-        }
-        window.speechSynthesis.speak(utter);
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      if (!window._audioContext) {
+        window._audioContext = new AudioCtx();
       }
+      const ctx = window._audioContext;
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+      const now = ctx.currentTime;
+      // Tone 1: E5 (659Hz)
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = "sine";
+      osc1.frequency.setValueAtTime(659.25, now);
+      gain1.gain.setValueAtTime(0.12, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.18);
+
+      // Tone 2: A5 (880Hz)
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = "sine";
+      osc2.frequency.setValueAtTime(880.0, now + 0.12);
+      gain2.gain.setValueAtTime(0.15, now + 0.12);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(now + 0.12);
+      osc2.stop(now + 0.38);
+    } catch(e) {
+      console.debug("Chime playback error:", e);
+    }
+  }
+
+  // Pre-load and cache voices
+  let cachedVoices = [];
+  function loadVoices() {
+    if ('speechSynthesis' in window) {
+      const v = window.speechSynthesis.getVoices();
+      if (v && v.length > 0) {
+        cachedVoices = v;
+      }
+    }
+  }
+  if ('speechSynthesis' in window) {
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+  }
+
+  function setPlayButtonState(speaking) {
+    const btn = document.getElementById("play-audio-btn");
+    if (!btn) return;
+    if (speaking) {
+      btn.classList.add("playing");
+      btn.innerHTML = `<span>🔊 SPEAKING...</span>`;
+    } else {
+      btn.classList.remove("playing");
+      btn.innerHTML = `<span>PLAY VOICE</span>`;
+    }
+  }
+
+  // Voice playback using Web Speech API with multi-voice fallback
+  function speakVoice(phrase, isUserGesture = false) {
+    if (!phrase) return;
+    const cleanPhrase = phrase.trim().replace(/^"|"$/g, '');
+    if (!cleanPhrase) return;
+
+    // Play pleasant dual transit chime
+    playTransitChime();
+
+    if (!('speechSynthesis' in window)) {
+      console.warn("Speech synthesis not supported in this browser environment.");
+      return;
+    }
+
+    try {
+      window.speechSynthesis.cancel();
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
+
+      const utter = new SpeechSynthesisUtterance(cleanPhrase);
+      // Retain global reference so V8 garbage collector doesn't cancel utterance mid-speech
+      window._activeSpeechUtterance = utter;
+
+      utter.rate = 0.95;
+      utter.pitch = 1.0;
+      utter.volume = 1.0;
+
+      if (!cachedVoices || cachedVoices.length === 0) {
+        loadVoices();
+      }
+
+      if (cachedVoices && cachedVoices.length > 0) {
+        const found = cachedVoices.find(v => v.lang && (/^en[-_]IN/i).test(v.lang)) ||
+                      cachedVoices.find(v => v.lang && (/^en[-_]US/i).test(v.lang)) ||
+                      cachedVoices.find(v => v.lang && (/^en[-_]GB/i).test(v.lang)) ||
+                      cachedVoices.find(v => v.lang && (/^en/i).test(v.lang));
+        if (found) {
+          utter.voice = found;
+          utter.lang = found.lang;
+        } else {
+          utter.lang = "en-US";
+        }
+      } else {
+        utter.lang = "en-IN";
+      }
+
+      utter.onstart = () => {
+        setPlayButtonState(true);
+      };
+
+      utter.onend = () => {
+        setPlayButtonState(false);
+        window._activeSpeechUtterance = null;
+      };
+
+      utter.onerror = (e) => {
+        console.warn("SpeechSynthesis utterance error:", e);
+        setPlayButtonState(false);
+        window._activeSpeechUtterance = null;
+      };
+
+      // 50ms buffer allows Chromium's cancel IPC to finish before dispatching new speech
+      setTimeout(() => {
+        try {
+          window.speechSynthesis.resume();
+          window.speechSynthesis.speak(utter);
+        } catch(err) {
+          console.error("speechSynthesis.speak error:", err);
+          setPlayButtonState(false);
+        }
+      }, 50);
+
     } catch (e) {
-      console.warn("Speech synthesis error:", e);
+      console.warn("Speech synthesis execution error:", e);
+      setPlayButtonState(false);
     }
   }
 
   playAudioBtn.addEventListener("click", () => {
-    speakVoice(currentSpokenPhrase);
+    unlockAudio();
+    const phrase = currentSpokenPhrase || 
+                   (document.getElementById("spoken-phrase-display") ? document.getElementById("spoken-phrase-display").textContent : "") || 
+                   "No announcement available";
+    speakVoice(phrase, true);
   });
 
   // Benchmark Batch Audit

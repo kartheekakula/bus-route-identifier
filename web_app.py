@@ -143,6 +143,16 @@ def run_pipeline_instrumented(frame: Any, capture_s: float = 0.0,
     real intermediate image frames.
     """
     t_start = time.monotonic()
+    # If frame is raw bytes, decode it to a numpy array if cv2/np are available
+    if isinstance(frame, (bytes, bytearray)) and cv2 is not None and np is not None:
+        try:
+            nparr = np.frombuffer(frame, np.uint8)
+            decoded = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if decoded is not None:
+                frame = decoded
+        except Exception as e:
+            logger.warning("cv2.imdecode failed on frame bytes: %s", e)
+
     h, w = 720, 1280
     if hasattr(frame, "shape") and len(frame.shape) >= 2:
         h, w = frame.shape[:2]
@@ -154,33 +164,68 @@ def run_pipeline_instrumented(frame: Any, capture_s: float = 0.0,
         except Exception:
             pass
 
-    # --- STAGE 1: PREPROCESSING ---
+    # --- STAGE 1: PREPROCESSING (Grayscale -> CLAHE -> Adaptive Binarization) ---
     t0 = time.monotonic()
     gray = None
     clahe_img = None
     binary = None
     preprocess_s = 0.0
 
-    if cv2 is not None and hasattr(frame, "shape") and config.OCR_MODE != "online":
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame.copy()
-        if config.UPSCALE_FACTOR != 1.0:
-            gray = cv2.resize(
-                gray, None,
-                fx=config.UPSCALE_FACTOR, fy=config.UPSCALE_FACTOR,
-                interpolation=cv2.INTER_LINEAR,
+    if cv2 is not None and hasattr(frame, "shape"):
+        try:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame.copy()
+            if config.UPSCALE_FACTOR != 1.0:
+                gray = cv2.resize(
+                    gray, None,
+                    fx=config.UPSCALE_FACTOR, fy=config.UPSCALE_FACTOR,
+                    interpolation=cv2.INTER_LINEAR,
+                )
+            clahe_img = preprocessing._clahe.apply(gray)
+            binary = cv2.adaptiveThreshold(
+                clahe_img,
+                255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY,
+                config.ADAPTIVE_THRESH_BLOCK_SIZE,
+                config.ADAPTIVE_THRESH_C,
             )
-        clahe_img = preprocessing._clahe.apply(gray)
-        binary = cv2.adaptiveThreshold(
-            clahe_img,
-            255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY,
-            config.ADAPTIVE_THRESH_BLOCK_SIZE,
-            config.ADAPTIVE_THRESH_C,
-        )
-        preprocess_s = time.monotonic() - t0
-    else:
-        preprocess_s = 0.0
+            preprocess_s = time.monotonic() - t0
+        except Exception as e:
+            logger.warning("OpenCV preprocessing failed: %s", e)
+
+    # Robust Pillow fallback if OpenCV was not available or failed
+    if gray is None or clahe_img is None or binary is None:
+        try:
+            from PIL import Image, ImageOps
+            if isinstance(frame, (bytes, bytearray)):
+                pil_img = Image.open(io.BytesIO(frame)).convert("RGB")
+            elif hasattr(frame, "shape"):
+                if frame.ndim == 2:
+                    pil_img = Image.fromarray(frame).convert("RGB")
+                else:
+                    pil_img = Image.fromarray(frame[:, :, ::-1])
+            else:
+                pil_img = None
+
+            if pil_img is not None:
+                p_gray = pil_img.convert("L")
+                p_clahe = ImageOps.equalize(p_gray)
+                p_bin = p_clahe.point(lambda p: 255 if p > 128 else 0)
+
+                buf_g = io.BytesIO()
+                p_gray.save(buf_g, format="JPEG")
+                gray = buf_g.getvalue()
+
+                buf_c = io.BytesIO()
+                p_clahe.save(buf_c, format="JPEG")
+                clahe_img = buf_c.getvalue()
+
+                buf_b = io.BytesIO()
+                p_bin.save(buf_b, format="JPEG")
+                binary = buf_b.getvalue()
+                preprocess_s = time.monotonic() - t0
+        except Exception as e:
+            logger.warning("Pillow preprocessing fallback failed: %s", e)
 
     # --- STAGE 2: OCR EXTRACTION VIA HYBRID ROUTER ---
     t0 = time.monotonic()
